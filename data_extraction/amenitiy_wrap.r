@@ -2,8 +2,19 @@ library(sf)
 library(dplyr)
 library(ggplot2)
 
-b <- st_read("C:\\Spatial-Analysis-of-Cities\\data\\bengaluru_boundary.gpkg", quiet = TRUE)
-p <- st_read("C:\\Spatial-Analysis-of-Cities\\data\\bengaluru_pois.gpkg", quiet = TRUE)
+# Usage (from the project root): Rscript data_extraction/amenitiy_wrap.r [slug]
+# slug is the lower-case city name used by data_extraction_osm.R (default: bengaluru)
+args <- commandArgs(trailingOnly = TRUE)
+slug <- if (length(args) >= 1) args[1] else "bengaluru"
+city_title <- tools::toTitleCase(slug)
+
+root <- if (requireNamespace("here", quietly = TRUE)) here::here() else getwd()
+data_dir <- file.path(root, "data")
+fig_dir <- file.path(data_dir, "figures")
+dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+
+b <- st_read(file.path(data_dir, paste0(slug, "_boundary.gpkg")), quiet = TRUE)
+p <- st_read(file.path(data_dir, paste0(slug, "_pois.gpkg")), quiet = TRUE)
 
 # Group raw OSM tags into broader categories (order matters: first match wins)
 p <- p |>
@@ -55,8 +66,10 @@ ggplot() +
     scale_colour_manual(values = pal) +
     guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1))) +
     theme_void() +
-    labs(title = "Bengaluru POIs by category", colour = NULL)
-ggsave("data/osm/bengaluru_pois_by_category.png", width = 9, height = 9, dpi = 200)
+    labs(title = paste(city_title, "POIs by category"), colour = NULL)
+ggsave(file.path(fig_dir, paste0(slug, "_pois_by_category.png")),
+    width = 9, height = 9, dpi = 200
+)
 
 # 2. One panel per category (easier to read than one crowded map)
 ggplot() +
@@ -68,4 +81,6 @@ ggplot() +
     scale_colour_manual(values = pal) +
     facet_wrap(~category, ncol = 3) +
     theme_void()
-ggsave("C:\\Spatial-Analysis-of-Cities\\data\\gg_wrap.png", width = 12, height = 12, dpi = 200)
+ggsave(file.path(fig_dir, paste0(slug, "_pois_facets.png")),
+    width = 12, height = 12, dpi = 200
+)
