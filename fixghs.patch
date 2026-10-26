@@ -1,0 +1,25 @@
+diff --git a/data_extraction/ghsl_builtup_capitals.R b/data_extraction/ghsl_builtup_capitals.R
+index 733ac07..275a6ff 100644
+--- a/data_extraction/ghsl_builtup_capitals.R
++++ b/data_extraction/ghsl_builtup_capitals.R
+@@ -316,10 +316,17 @@ main <- function() {
+ 
+   ee <- init_ee(opt("project", Sys.getenv("EE_PROJECT", unset = "")))
+   img <- ee$Image(ghsl_asset)$select(ghsl_band)
+-  crs <- img$projection()$getInfo()$crs
+-  if (is.null(crs)) stop("Could not read the projection of ", ghsl_asset, call. = FALSE)
++  # Earth Engine reports a standard projection under `crs` (e.g. "EPSG:4326") but
++  # a custom one such as GHSL's Mollweide as WKT text under `wkt`. Either can be
++  # passed back to getDownloadURL as `crs`.
++  pinfo <- img$projection()$getInfo()
++  crs <- if (!is.null(pinfo$crs)) pinfo$crs else pinfo$wkt
++  if (is.null(crs) || !nzchar(crs)) {
++    stop("Could not read the projection of ", ghsl_asset, ". Earth Engine returned ",
++         "these fields: ", paste(names(pinfo), collapse = ", "), call. = FALSE)
++  }
+   message("Asset ", ghsl_asset, ", band ", ghsl_band, ", native CRS: ",
+-          substr(crs, 1, 60))
++          gsub("\\s+", " ", substr(crs, 1, 70)))
+ 
+   rows <- lapply(seq_len(nrow(todo)), function(i) {
+     tryCatch(
