@@ -19,6 +19,10 @@ library(osmdata)
 library(sf)
 library(dplyr)
 
+# Regional OSM extracts are hundreds of MB; R's default 60 s download limit
+# aborts them part-way. Allow up to an hour.
+options(timeout = max(3600, getOption("timeout")))
+
 # ---- Configuration ----------------------------------------------------------
 
 args <- commandArgs(trailingOnly = TRUE)
