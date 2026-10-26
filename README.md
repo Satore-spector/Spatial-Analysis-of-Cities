@@ -7,18 +7,28 @@ This README explains the plan, what exists today, and where help is needed.
 ## The idea in one paragraph
 
 We download open map data for many cities, turn each city into a set of image-like grids (where the shops, offices, buildings and roads are), and train a neural network **without labels** to learn what makes cities look similar or different. We then cluster what it learned and check whether the groups match known ideas like monocentric and polycentric. The first goal is not a final answer. It is to narrow down broad trends so we know where to look closer.
-
+https://download.geofabrik.de/asia/india.html
 ## Status
 
 | Step | State |
 |---|---|
-| 1. Download city data (OpenStreetMap + GHSL built-up) | Working for Bengaluru (needs a full test run on more cities) |
+| 1. Download city data (OpenStreetMap + GHSL built-up) | Working; run for Bengaluru, more South Indian cities in progress |
 | 2. Consistent city boundaries | Partly done (see below) |
-| 3. Turn cities into grids | Built (`analysis/rasterize.py`), tested on fake cities |
-| 4. Unsupervised neural network | Built (`analysis/train.py`), tested on fake cities |
-| 5. Clustering and checking against known measures | Built (`analysis/cluster.py`, `classical.py`, `compare.py`), tested on fake cities |
+| 3. Turn cities into grids | Built (`analysis/rasterize.py`); tested on fake cities, run on Bengaluru |
+| 4. Unsupervised neural network | Built (`analysis/train.py`); tested on fake cities, run on Bengaluru (tile mode) |
+| 5. Clustering and checking against known measures | Built (`analysis/cluster.py`, `classical.py`, `compare.py`); tested on fake cities, run on Bengaluru |
 
-Steps 3-5 have only been run on fake cities so far. The next job is to run them on real cities.
+Steps 3-5 are tested on fake cities with a known answer (`python run_analysis.py --test`) and have run on one real city, Bengaluru, in tile mode. Comparing cities with each other needs at least 3 cities; that is the next run.
+
+## First results: Bengaluru (one city, tile mode)
+
+OSM extraction (October 2026): 54,186 POIs (40,855 mapped as points, 13,331 as shapes), 736,627 buildings, 108,713 road lines, boundary from the place-name search.
+
+- **Classical tests disagree.** The Giuliano-Small style test finds one subcentre, south of the main centre. The McMillen style test finds none. So Bengaluru comes out as "unclear". Activity is spread across the city with many medium-busy patches, so nothing stands out sharply enough for the stricter McMillen test. These tests count POIs (shops, amenities), which likely under-count job hubs such as tech parks; rerunning with `--measure poi_offices` is the next check.
+- **The network's 8 patch types form rings.** A commercial core (dense in retail, finance and food) sits in the middle, surrounded by a dense residential ring, then mixed suburbs, then outer residential and the city edge. This looks like a strongly monocentric layout.
+- **One exception: an office-and-leisure patch type on the east side,** away from the core. This may be a second, office-type centre that the POI-based classical tests miss. Where exactly it is still needs checking on a map (`data/rasters/bengaluru.tif` in QGIS).
+
+With one city these are descriptions of Bengaluru, not comparisons: a patch type means "this kind of area within Bengaluru". Running several cities together makes the types shared and comparable.
 
 ## How the pipeline works
 
