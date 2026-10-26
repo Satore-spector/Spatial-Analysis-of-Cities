@@ -27,6 +27,9 @@
 #   --force             rebuild outputs that already exist (downloaded tiles are reused;
 #                       delete data/ghsl/tiles/<slug>/ to download them again)
 #   --tile-deg=0.1      size of each download tile in degrees (smaller = more requests)
+#   --summary=NAME.csv  name of the summary file in data/ghsl/ (default
+#                       ghsl_capitals_summary.csv); use another name for test runs
+#                       so they do not overwrite real results
 #
 # Output, in data/ghsl/:
 #   <slug>_ghs_built_s_2018_10m.tif   built-up surface (m2 per 10 m cell, 0-100),
@@ -292,7 +295,11 @@ main <- function() {
       message("Running OSM extraction for: ", paste(missing, collapse = "; "))
       old_wd <- setwd(root)
       on.exit(setwd(old_wd), add = TRUE)
-      system2(file.path(R.home("bin"), "Rscript"),
+      rscript <- file.path(R.home("bin"), "Rscript")
+      if (!file.exists(rscript) && !file.exists(paste0(rscript, ".exe"))) {
+        rscript <- if (nzchar(Sys.which("Rscript"))) Sys.which("Rscript") else "Rscript"
+      }
+      system2(rscript,
               c(shQuote(file.path("data_extraction", "data_extraction_osm.R")),
                 shQuote(missing)))
     }
@@ -316,7 +323,8 @@ main <- function() {
   })
   summary_tbl <- do.call(rbind, rows)
   print(summary_tbl[, setdiff(names(summary_tbl), c("file", "message"))])
-  utils::write.csv(summary_tbl, file.path(opts$ghsl_dir, "ghsl_capitals_summary.csv"),
+  utils::write.csv(summary_tbl,
+                   file.path(opts$ghsl_dir, opt("summary", "ghsl_capitals_summary.csv")),
                    row.names = FALSE)
   invisible(summary_tbl)
 }
