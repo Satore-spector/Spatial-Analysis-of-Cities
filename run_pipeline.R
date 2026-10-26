@@ -77,12 +77,20 @@ preflight <- function(root, need_osm, need_plots, need_ghsl, project) {
                       paste0("install.packages(\"", p, "\")"))
 
   if (need_ghsl) {
-    add("Earth Engine project set", nzchar(project),
-        "pass --project=<id> or set the EE_PROJECT environment variable")
+    add("Earth Engine project set",
+        nzchar(project) && !grepl("YOUR", toupper(project), fixed = TRUE),
+        "pass your real Google Cloud project ID: --project=<id> (or set EE_PROJECT)")
     if (has_pkg("reticulate")) {
+      # Newer reticulate installs Python packages on demand. This must run
+      # before Python starts, so it comes before the check below.
+      if ("py_require" %in% getNamespaceExports("reticulate")) {
+        tryCatch(reticulate::py_require("earthengine-api"), error = function(e) NULL)
+      }
       add("Python package earthengine-api",
           tryCatch(reticulate::py_module_available("ee"), error = function(e) FALSE),
-          "reticulate::py_install(\"earthengine-api\")")
+          paste0("update reticulate (install.packages(\"reticulate\")) so it can install ",
+                 "Python packages itself, or install Python 3.12 and run ",
+                 "reticulate::py_install(\"earthengine-api\")"))
     }
   }
   do.call(rbind, rows)

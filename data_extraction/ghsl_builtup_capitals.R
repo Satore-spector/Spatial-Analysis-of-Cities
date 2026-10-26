@@ -11,7 +11,9 @@
 #
 # Setup (once):
 #   install.packages(c("reticulate", "sf", "terra"))
-#   reticulate::py_install("earthengine-api")
+#   The Python package earthengine-api is installed automatically by a recent
+#   reticulate. (With an old reticulate, install Python 3.12 and run
+#   reticulate::py_install("earthengine-api").)
 #   You also need a Google Cloud project with the Earth Engine API enabled and
 #   registered for Earth Engine use (https://code.earthengine.google.com/register).
 #   The first run opens a browser to log in.
@@ -95,15 +97,22 @@ summary_row <- function(city, state, status, tiles = NA_integer_,
 # ---- Earth Engine -----------------------------------------------------------
 
 init_ee <- function(project) {
-  if (!nzchar(project)) {
-    stop("Pass your Google Cloud project: --project=<id> (or set EE_PROJECT).",
+  if (!nzchar(project) || grepl("YOUR", toupper(project), fixed = TRUE)) {
+    stop("Pass your real Google Cloud project ID: --project=<id> (or set EE_PROJECT).",
          call. = FALSE)
+  }
+  # Newer reticulate installs Python packages on demand; this has to be declared
+  # before Python starts. Older reticulate lacks it and needs py_install instead.
+  if ("py_require" %in% getNamespaceExports("reticulate")) {
+    tryCatch(reticulate::py_require("earthengine-api"), error = function(e) NULL)
   }
   ee <- tryCatch(
     reticulate::import("ee"),
     error = function(e) {
-      stop("Python package 'earthengine-api' not found. Run: ",
-           "reticulate::py_install(\"earthengine-api\")", call. = FALSE)
+      stop("Python package 'earthengine-api' not found (", conditionMessage(e), "). ",
+           "Update reticulate so it can install it automatically, or install ",
+           "Python 3.12 and run reticulate::py_install(\"earthengine-api\").",
+           call. = FALSE)
     }
   )
   ok <- tryCatch({ ee$Initialize(project = project); TRUE }, error = function(e) FALSE)
