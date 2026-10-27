@@ -95,6 +95,22 @@ def venv_python(venv: Path) -> Path:
 # --------------------------------------------------------------------------- #
 # Python half
 # --------------------------------------------------------------------------- #
+def ensure_gitignored(venv: Path) -> None:
+    """Make sure the virtual environment folder is listed in .gitignore."""
+    try:
+        rel = venv.resolve().relative_to(ROOT).as_posix() + "/"
+    except ValueError:
+        return  # venv lives outside the project, nothing to ignore
+    gi = ROOT / ".gitignore"
+    lines = gi.read_text().splitlines() if gi.exists() else []
+    if rel in lines or rel.rstrip("/") in lines:
+        return
+    say(f"  Adding {rel} to .gitignore so it is never committed")
+    if not DRY:
+        with gi.open("a") as fh:
+            fh.write(("\n" if lines and lines[-1] else "") + rel + "\n")
+
+
 def setup_python(venv: Path, gpu: bool) -> Path:
     step("Python environment")
     if sys.version_info < MIN_PY:
@@ -103,6 +119,7 @@ def setup_python(venv: Path, gpu: bool) -> Path:
         )
     say(f"  Using Python {platform.python_version()} ({sys.executable})")
 
+    ensure_gitignored(venv)
     py = venv_python(venv)
     if py.exists():
         say(f"  Virtual environment already exists: {venv}")

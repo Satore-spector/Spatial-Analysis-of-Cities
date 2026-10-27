@@ -41,14 +41,14 @@ ng <- native_grid(77.5, 12.9, 77.6, 13.0, moll_wkt, tr)
 check("a 0.1 degree tile is about 1,200 x 1,200 cells",
       !is.null(ng) && all(ng$dimensions > 1000 & ng$dimensions < 1400))
 check("tile corner sits on the 10 m grid",
-      abs(((ng$crs_transform[5] - tr[3]) / 10) %% 1) < 1e-9 &&
+      abs(((ng$crs_transform[3] - tr[3]) / 10) %% 1) < 1e-9 &&
         abs(((tr[6] - ng$crs_transform[6]) / 10) %% 1) < 1e-9)
 corners <- st_coordinates(st_transform(st_as_sf(
   data.frame(x = c(77.5, 77.6, 77.5, 77.6), y = c(12.9, 12.9, 13.0, 13.0)),
   coords = c("x", "y"), crs = 4326), st_crs(moll_wkt)))
 check("grid covers all four tile corners",
-      min(corners[, 1]) >= ng$crs_transform[5] &&
-        max(corners[, 1]) <= ng$crs_transform[5] + ng$dimensions[1] * 10 &&
+      min(corners[, 1]) >= ng$crs_transform[3] &&
+        max(corners[, 1]) <= ng$crs_transform[3] + ng$dimensions[1] * 10 &&
         max(corners[, 2]) <= ng$crs_transform[6] &&
         min(corners[, 2]) >= ng$crs_transform[6] - ng$dimensions[2] * 10)
 check("returns NULL when the grid is not 10 m",

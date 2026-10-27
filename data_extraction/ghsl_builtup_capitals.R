@@ -162,7 +162,8 @@ native_grid <- function(xmin, ymin, xmax, ymax, crs, transform, cell = cell_size
   w <- ceiling((max(m[, 1]) - x0) / cell)
   h <- ceiling((y1 - min(m[, 2])) / cell)
   if (w < 1 || h < 1 || w > 10000 || h > 10000) return(NULL)
-  list(crs_transform = c(cell, 0, 0, -cell, x0, y1),
+  # Same order Earth Engine reports: [xScale, xShear, xTrans, yShear, yScale, yTrans].
+  list(crs_transform = c(cell, 0, x0, 0, -cell, y1),
        dimensions = c(as.integer(w), as.integer(h)))
 }
 
