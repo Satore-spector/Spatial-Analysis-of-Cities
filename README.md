@@ -258,3 +258,18 @@ Where we may add something: combining POIs, buildings and roads in one input, co
 2. Then all of India. Read `data/india/analysis/classification/report.md`, especially the GHSL vs OSM agreement and the mapping-quality check.
 3. Look at `cluster_profiles.png` and `tile_maps.png` to name the network's groups, and at the very large urban centres by hand.
 4. Read the related work above.
+
+## OSM DATA
+Download these into the project’s data\osm_pbf\ folder, keeping the file names as they are (the script finds them there and won’t download again):
+
+https://download.geofabrik.de/asia/india/central-zone-latest.osm.pbf
+https://download.geofabrik.de/asia/india/eastern-zone-latest.osm.pbf
+https://download.geofabrik.de/asia/india/northern-zone-latest.osm.pbf
+https://download.geofabrik.de/asia/india/southern-zone-latest.osm.pbf
+https://download.geofabrik.de/asia/india/western-zone-latest.osm.pbf
+https://download.geofabrik.de/asia/india/north-eastern-zone-latest.osm.pbf 
+
+command to run:
+python run_country.py --country India --project bdacer --limit 20 --only analysis classify --engine spark --force
+--to check if it works on 20 largest cities
+python run_country.py --country India --project bdacer --only analysis classify --engine spark --force
