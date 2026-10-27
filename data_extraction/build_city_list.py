@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the list of US urban centres above a population cutoff.
+"""Build the list of urban centres in a country above a population cutoff.
 
 Source: GHSL Urban Centre Database R2024A (GHS-UCDB), European Commission JRC,
 CC BY 4.0. Each urban centre is a polygon defined on a 1 km grid by population
@@ -7,23 +7,33 @@ and built-up-share cutoffs, so the list is consistent across the whole country
 and needs no name lookups in OpenStreetMap.
 
 Usage (from the project root, inside the project venv):
-    python data_extraction/build_city_list.py
+    python data_extraction/build_city_list.py                     US, 50,000+ people
     python data_extraction/build_city_list.py --min-pop 100000
     python data_extraction/build_city_list.py --ucdb path/to/GHS_UCDB_GLOBE_R2024A.gpkg
-    python data_extraction/build_city_list.py --country "Canada"
+    python data_extraction/build_city_list.py --country India --min-pop 100000 --data-dir data/india
 
-Output:
-    data/uc/us_cities.csv            one row per city (slug, name, state, population, ...)
-    data/uc/us_urban_centres.gpkg    all selected polygons in one file (EPSG:4326)
+Output (<cc> is "us" for the United States, else the country name in lower case):
+    <data-dir>/uc/<cc>_cities.csv            one row per city (slug, name, state, population, ...)
+    <data-dir>/uc/<cc>_urban_centres.gpkg    all selected polygons in one file (EPSG:4326)
     data/<slug>_boundary.gpkg        one boundary per city, in the file name the
                                      Python analysis expects (EPSG:4326)
     data/boundaries/<slug>.gpkg      the same polygon, where data_extraction_osm.R
                                      looks for a custom boundary (so OSM extraction
                                      uses this footprint, not a place-name search)
 
-Slugs follow the project's rule (letters only, lower case) and add the state
-abbreviation so that the many cities with the same name stay apart, for example
-"Portland OR, USA" -> portlandor.
+Slugs follow the project's rule (letters only, lower case). For the US they
+add the state abbreviation so that the many cities with the same name stay
+apart, for example "Portland OR, USA" -> portlandor. Elsewhere a repeated name
+gets a letter: the larger "Aurangabad" stays aurangabad, the next is aurangabada.
+
+The global UCDB (about 1.7 GB) is downloaded once into --cache-dir (default
+data/uc) and shared by every --data-dir.
+
+Very large urban centres: the UCDB joins built-up areas that touch on its 1 km
+grid. In densely settled regions (much of Kerala, parts of the Gangetic plain)
+this can make one "urban centre" out of a whole district. Such centres are
+listed at the end of the run and flagged with large_area=True in the CSV, so
+the analysis can treat them with care.
 """
 
 from __future__ import annotations
@@ -49,6 +59,14 @@ UCDB_URL = (
 STATES_URL = "https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_state_20m.zip"
 
 US_NAMES = {"united states", "united states of america", "usa", "us"}
+LARGE_AREA_KM2 = 2500  # bigger than this is flagged as a possible merged region
+
+
+def country_code(country: str) -> str:
+    """'United States' -> 'us' (kept for the existing US files), 'India' -> 'india'."""
+    if country.lower() in US_NAMES:
+        return "us"
+    return re.sub(r"[^a-z]", "", country.lower()) or "country"
 
 
 def say(msg: str) -> None:
@@ -173,7 +191,7 @@ def add_state(gdf: gpd.GeoDataFrame, cache: Path) -> gpd.GeoDataFrame:
     return gdf
 
 
-def make_slugs(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def make_slugs(gdf: gpd.GeoDataFrame, country_label: str = "USA") -> gpd.GeoDataFrame:
     """Unique, letters-only slugs that follow the project's city_slug() rule."""
     gdf = gdf.copy()
     base = (gdf["name"].astype(str) + gdf["state"].astype(str)).str.lower().str.replace(
@@ -187,7 +205,8 @@ def make_slugs(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     gdf["slug"] = slugs
     st = gdf["state"].replace("", pd.NA)
     gdf["city"] = [
-        f"{n} {s}, USA" if isinstance(s, str) else f"{n}, USA" for n, s in zip(gdf["name"], st)
+        f"{n} {s}, {country_label}" if isinstance(s, str) else f"{n}, {country_label}"
+        for n, s in zip(gdf["name"], st)
     ]
     return gdf
 
@@ -207,13 +226,19 @@ def main() -> None:
     ap.add_argument("--country", default="United States", help="country name as in the UCDB")
     ap.add_argument("--min-pop", type=float, default=50_000, help="keep centres with MORE than this many people")
     ap.add_argument("--year", type=int, default=2025, help="population/name year in the UCDB columns")
-    ap.add_argument("--data-dir", type=Path, default=Path("data"))
+    ap.add_argument("--data-dir", type=Path, default=Path("data"),
+                    help="where the list and boundaries go (use e.g. data/india to keep countries apart)")
+    ap.add_argument("--cache-dir", type=Path, default=Path("data/uc"),
+                    help="where the downloaded UCDB is kept (shared by all data dirs)")
     ap.add_argument("--no-boundaries", action="store_true", help="only write the list, not per-city boundary files")
     ap.add_argument("--force", action="store_true", help="overwrite existing boundary files")
     args = ap.parse_args()
 
-    cache = args.data_dir / "uc"
+    cache = args.cache_dir
     cache.mkdir(parents=True, exist_ok=True)
+    outdir = args.data_dir / "uc"
+    outdir.mkdir(parents=True, exist_ok=True)
+    cc = country_code(args.country)
     gdf = load_ucdb(get_ucdb(args.ucdb, cache), args.year)
     say(f"{len(gdf):,} urban centres worldwide")
 
@@ -233,15 +258,16 @@ def main() -> None:
         sel = add_state(sel, cache)
     else:
         sel["state"] = ""
-    sel = make_slugs(sel)
+    sel = make_slugs(sel, "USA" if cc == "us" else args.country)
+    sel["large_area"] = sel["area_km2"] > LARGE_AREA_KM2
     c = sel.geometry.representative_point()
     sel["lon"], sel["lat"] = c.x.round(5), c.y.round(5)
 
-    cols = ["slug", "city", "name", "state", "pop", "area_km2", "lon", "lat", "ucid"]
-    csv = cache / "us_cities.csv"
+    cols = ["slug", "city", "name", "state", "pop", "area_km2", "large_area", "lon", "lat", "ucid"]
+    csv = outdir / f"{cc}_cities.csv"
     sel[cols].to_csv(csv, index=False)
-    sel[cols + ["geometry"]].to_file(cache / "us_urban_centres.gpkg", driver="GPKG")
-    say(f"Wrote {csv} and {cache / 'us_urban_centres.gpkg'}")
+    sel[cols + ["geometry"]].to_file(outdir / f"{cc}_urban_centres.gpkg", driver="GPKG")
+    say(f"Wrote {csv} and {outdir / f'{cc}_urban_centres.gpkg'}")
 
     if not args.no_boundaries:
         # Two copies, because two scripts look in different places:
@@ -260,6 +286,11 @@ def main() -> None:
         say(f"Wrote {n} boundary files to {args.data_dir}/ and {bdir}/ (existing ones kept; --force to overwrite)")
 
     say("\nLargest five:\n" + sel[["city", "pop", "area_km2"]].head().to_string(index=False))
+    big = sel[sel["large_area"]]
+    if len(big):
+        say(f"\n{len(big)} urban centre(s) larger than {LARGE_AREA_KM2:,} km2, possibly several towns "
+            "merged into one (flagged large_area=True):\n"
+            + big[["city", "pop", "area_km2"]].to_string(index=False))
 
 
 if __name__ == "__main__":

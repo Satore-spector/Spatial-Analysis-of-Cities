@@ -224,7 +224,8 @@ def plots(out, mode, res, profiles, channels, how2d):
     ax.scatter(res.map_x, res.map_y, c=[colour(c) for c in res.cluster],
                s=40 if mode == "city" else 6, alpha=0.9 if mode == "city" else 0.6)
     if mode == "city":
-        for _, r in res.iterrows():
+        label = res if len(res) <= 40 else res.iloc[np.linspace(0, len(res) - 1, 40).astype(int)]
+        for _, r in label.iterrows():
             ax.annotate(r.city, (r.map_x, r.map_y), fontsize=7, xytext=(3, 3), textcoords="offset points")
     for c in sorted(res.cluster.unique()):
         ax.scatter([], [], color=colour(c), label=f"group {c}" if c >= 0 else "unassigned")
@@ -245,7 +246,11 @@ def plots(out, mode, res, profiles, channels, how2d):
     fig.savefig(out / "cluster_profiles.png", dpi=130, bbox_inches="tight"); plt.close(fig)
 
     if mode == "tile":
-        cities = sorted(res.city.unique())
+        # At most 24 cities in the picture (those with the most tiles); all are in the CSVs.
+        cities = res.city.value_counts().index[:24].tolist()
+        if res.city.nunique() > 24:
+            say(f"  tile_maps.png shows the 24 largest of {res.city.nunique()} cities")
+        cities = sorted(cities)
         ncol = min(4, len(cities))
         nrow = int(np.ceil(len(cities) / ncol))
         fig, axes = plt.subplots(nrow, ncol, figsize=(3.2 * ncol, 3.2 * nrow), squeeze=False)

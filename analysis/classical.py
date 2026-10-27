@@ -7,8 +7,10 @@ Activity measure: POIs per km2 by default (a stand-in for employment, which
 the classical literature uses but OpenStreetMap does not have). Change it with
 --measure, e.g. --measure poi_offices or --measure buildings.
 
-The city grid is first merged into --vcell metre cells (default 500 m), and
-the CBD is the busiest point found in step 2. Then, for each city:
+The city grid is first merged into --vcell metre cells (default 500 m). The
+CBD is the busiest point of the measure being tested: for POIs the centre
+found in step 2, for any other layer (e.g. built_up) that layer's own peak,
+smoothed over about 1 km. Then, for each city:
 
 1. Density gradient (the monocentric model). Fit  log(density) = a - b * distance.
    A steep slope b and a high R2 mean activity falls away smoothly from one
@@ -26,12 +28,16 @@ the CBD is the busiest point found in step 2. Then, for each city:
    distance from the CBD (LOWESS). Cells far above that curve (standardised
    residual above --z) are candidates; contiguous candidate groups holding at
    least --min-share of activity and lying at least --min-dist-km from the CBD
-   are subcentres. (A simplified version of McMillen (2001), which uses a
-   locally weighted regression over both coordinates.)
+   are subcentres if they also contain a local peak of density (the highest
+   point within 1.5 km, after smoothing over 1 km). (A simplified version of
+   McMillen (2001), which uses a locally weighted regression over both
+   coordinates; the peak rule stands in for that, so that the two ends of one
+   stretched-out centre are not counted as subcentres.)
 
 A city is called monocentric by a test if that test finds no subcentres.
 
-Writes data/analysis/classical/classical_measures.csv and one map per city
+Writes data/analysis/classical/classical_measures.csv (or, for another
+--measure, classical_measures_<measure>.csv) and one map per city
 (classical_<slug>.png) with the centres outlined.
 
 Usage:
@@ -62,11 +68,20 @@ def activity_layer(grid, meta, measure):
     return grid[ch.index(measure)]
 
 
-def centres_from_candidates(cand, act, cbd, dist_km, min_share, min_dist_km, total):
+def local_peaks(dens, inside, cell_km, smooth_km=1.0, radius_km=1.5):
+    """Cells that are the highest point of the smoothed density within radius_km."""
+    sm = ndimage.gaussian_filter(np.where(inside, dens, 0).astype(float), sigma=max(smooth_km / cell_km, 0.5))
+    size = 2 * max(1, int(round(radius_km / cell_km))) + 1
+    return inside & (sm > 0) & (sm >= ndimage.maximum_filter(sm, size=size))
+
+
+def centres_from_candidates(cand, act, cbd, dist_km, min_share, min_dist_km, total, peaks=None):
     """Join candidate cells into groups and keep those big enough.
 
     Returns (labelled array, list of dicts for the kept groups). The group
-    containing the CBD (or nearest to it) is marked main=True.
+    containing the CBD (or nearest to it) is marked main=True. With `peaks`,
+    a subcentre must also contain a local peak of density of its own; this
+    stops the two ends of one stretched-out centre counting as subcentres.
     """
     lab, n = ndimage.label(cand, structure=EIGHT)
     groups = []
@@ -82,7 +97,8 @@ def centres_from_candidates(cand, act, cbd, dist_km, min_share, min_dist_km, tot
         main = next((g for g in groups if g["contains_cbd"]), None) or min(groups, key=lambda g: g["min_dist_km"])
         for g in groups:
             g["main"] = g is main and g["min_dist_km"] < min_dist_km
-    keep = [g for g in groups if g["main"] or g["min_dist_km"] >= min_dist_km]
+    keep = [g for g in groups if g["main"] or (g["min_dist_km"] >= min_dist_km and
+                                              (peaks is None or bool(peaks[lab == g["id"]].any())))]
     for g in groups:
         if g not in keep:
             lab[lab == g["id"]] = 0
@@ -104,7 +120,13 @@ def measure_city(slug, data_dir, measure, vcell, density_pct, min_share, z_crit,
     act[~inside] = 0
     km2 = (cell * f / 1000) ** 2
     dens = act / km2
-    cbd = (min(meta["centre_rc"][0] // f, act.shape[0] - 1), min(meta["centre_rc"][1] // f, act.shape[1] - 1))
+    if measure == "pois":   # the centre found in step 2 (peak of POI density)
+        cbd = (min(meta["centre_rc"][0] // f, act.shape[0] - 1), min(meta["centre_rc"][1] // f, act.shape[1] - 1))
+    else:                   # this measure's own peak, smoothed over about 1 km
+        from scipy import ndimage
+        sm = ndimage.gaussian_filter(act.astype(float), sigma=max(1000 / (cell * f), 0.5))
+        sm[~inside] = -1
+        cbd = tuple(int(v) for v in np.unravel_index(np.argmax(sm), sm.shape))
     rr, cc = np.indices(act.shape)
     dist_km = np.hypot(rr - cbd[0], cc - cbd[1]) * cell * f / 1000
     total = act.sum()
@@ -138,8 +160,9 @@ def measure_city(slug, data_dir, measure, vcell, density_pct, min_share, z_crit,
     fitted[pos] = lowess_curve(dist_km[pos], np.log(dens[pos]), frac)
     r = np.where(pos, np.log(np.where(pos, dens, 1)) - fitted, np.nan)
     zres = (r - np.nanmean(r)) / np.nanstd(r)
+    peaks = local_peaks(dens, inside, cell * f / 1000)
     mc_lab, mc = centres_from_candidates(pos & (np.nan_to_num(zres) >= z_crit), act, cbd, dist_km,
-                                         min_share, min_dist_km, total)
+                                         min_share, min_dist_km, total, peaks)
     subs = [g for g in mc if not g["main"]]
     row.update(mcmillen_subcentres=len(subs),
                mcmillen_subcentre_share=round(sum(g["share"] for g in subs), 3))
@@ -170,9 +193,17 @@ def city_map(path, slug, dens, inside, gs_lab, mc_lab, cbd, row):
     fig.savefig(path, dpi=120, bbox_inches="tight"); plt.close(fig)
 
 
+def measures_file(data_dir, measure: str = "pois") -> Path:
+    """data/analysis/classical/classical_measures.csv for POIs (the original name),
+    classical_measures_<measure>.csv for any other measure, e.g. built_up."""
+    name = "classical_measures.csv" if measure == "pois" else f"classical_measures_{measure}.csv"
+    return Path(data_dir) / "analysis" / "classical" / name
+
+
 def run(data_dir, cities=None, measure="pois", vcell=500, density_pct=90, min_share=0.03,
-        z_crit=1.96, min_dist_km=3.0, frac=0.3):
+        z_crit=1.96, min_dist_km=3.0, frac=0.3, maps=True):
     data_dir = Path(data_dir)
+    tag = "" if measure == "pois" else f"{measure}_"
     out = data_dir / "analysis" / "classical"
     out.mkdir(parents=True, exist_ok=True)
     slugs = [s for s in find_cities(data_dir, cities) if (raster_dir(data_dir) / f"{s}.npz").exists()]
@@ -181,21 +212,23 @@ def run(data_dir, cities=None, measure="pois", vcell=500, density_pct=90, min_sh
     rows = []
     for slug in slugs:
         try:
-            row, maps = measure_city(slug, data_dir, measure, vcell, density_pct, min_share,
-                                     z_crit, min_dist_km, frac)
+            row, maps_out = measure_city(slug, data_dir, measure, vcell, density_pct, min_share,
+                                         z_crit, min_dist_km, frac)
         except Exception as e:
-            row, maps = {"city": slug, "status": "error", "message": str(e)}, None
+            row, maps_out = {"city": slug, "status": "error", "message": str(e)}, None
         rows.append(row)
-        if maps is not None:
-            city_map(out / f"classical_{slug}.png", slug, *maps, row)
+        if maps_out is not None and maps:
+            city_map(out / f"classical_{tag}{slug}.png", slug, *maps_out, row)
     res = pd.DataFrame(rows)
-    res.to_csv(out / "classical_measures.csv", index=False)
-    write_json(out / "classical_settings.json", {
+    res.to_csv(measures_file(data_dir, measure), index=False)
+    write_json(out / f"classical_{tag}settings.json", {
         "measure": measure, "vcell_m": vcell, "density_pct": density_pct, "min_share": min_share,
         "z": z_crit, "min_dist_km": min_dist_km, "lowess_frac": frac})
     cols = [c for c in ["city", "gradient_per_km", "gradient_r2", "gs_subcentres",
                         "mcmillen_subcentres", "classical_type", "status"] if c in res]
-    say("Classical measures\n" + res[cols].to_string(index=False))
+    say(f"Classical measures ({measure})")
+    say(res[cols].to_string(index=False) if len(res) <= 30 else
+        res.get("classical_type", pd.Series(dtype=str)).value_counts().to_string())
     return res
 
 
@@ -217,9 +250,10 @@ def main(argv=None):
     ap.add_argument("cities", nargs="*")
     ap.add_argument("--data-dir", default=str(DATA_DIR))
     add_args(ap)
+    ap.add_argument("--no-maps", action="store_true", help="skip the per-city map images")
     a = ap.parse_args(argv)
     run(a.data_dir, a.cities, a.measure, a.vcell, a.density_pct, a.min_share, a.z,
-        a.min_dist_km, a.lowess_frac)
+        a.min_dist_km, a.lowess_frac, maps=not a.no_maps)
 
 
 if __name__ == "__main__":

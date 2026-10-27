@@ -60,9 +60,9 @@ PY_CHECKS = {
     "geopandas": "geopandas", "shapely": "shapely", "pyogrio": "pyogrio",
     "pyproj": "pyproj", "rasterio": "rasterio", "statsmodels": "statsmodels",
     "torch": "torch", "umap": "umap-learn",
-    "ee": "earthengine-api", "requests": "requests",
+    "ee": "earthengine-api", "requests": "requests", "pyarrow": "pyarrow",
 }
-PY_OPTIONAL_CHECKS = {"pyspark": "pyspark", "pyarrow": "pyarrow"}
+PY_OPTIONAL_CHECKS = {"pyspark": "pyspark", "osmium": "osmium"}
 
 DRY = False
 

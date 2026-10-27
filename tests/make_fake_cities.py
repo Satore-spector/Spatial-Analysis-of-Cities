@@ -154,6 +154,8 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--n", type=int, default=12, help="number of cities (half of each kind)")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--ghsl-every", type=int, default=3,
+                    help="write a GHSL-style raster for every Nth city (1 = all cities)")
     args = ap.parse_args(argv)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -163,7 +165,7 @@ def main(argv=None):
         kind = "monocentric" if i % 2 == 0 else "polycentric"
         slug = f"fake{chr(ord('a') + i // 26)}{chr(ord('a') + i % 26)}{'mono' if i % 2 == 0 else 'poly'}"
         lon, lat = rng.uniform(72, 88), rng.uniform(10, 28)  # spread over several UTM zones
-        truth.append(make_city(rng, slug, kind, out, lon, lat, with_ghsl=(i % 3 == 0)))
+        truth.append(make_city(rng, slug, kind, out, lon, lat, with_ghsl=(i % args.ghsl_every == 0)))
         print("made", slug, kind, flush=True)
     pd.DataFrame(truth).to_csv(out / "fake_cities_truth.csv", index=False)
 

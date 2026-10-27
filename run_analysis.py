@@ -52,6 +52,7 @@ def main(argv=None):
     g.add_argument("--cell", type=float, default=100)
     g.add_argument("--poi-source", choices=["both", "node", "area"], default="both")
     g.add_argument("--force", action="store_true", help="redo grids that already exist")
+    g.add_argument("--workers", type=int, default=1, help="cities to grid in parallel")
     samples.add_args(ap.add_argument_group("step 3 (samples)"))
     train.add_args(ap.add_argument_group("step 3 (training)"))
     cluster.add_args(ap.add_argument_group("step 4 (clustering)"))
@@ -86,7 +87,7 @@ def main(argv=None):
             return True
 
     ok = a.skip_rasterize or step(f"Step 2: rasterize ({a.engine})", lambda: rasterize.run(
-        a.data_dir, a.cities, a.cell, a.poi_source, a.force, a.engine))
+        a.data_dir, a.cities, a.cell, a.poi_source, a.force, a.engine, a.workers))
     if not a.skip_classical and ok:
         step("Step 5a: classical tests", lambda: classical.run(
             a.data_dir, a.cities, a.measure, a.vcell, a.density_pct, a.min_share, a.z,
@@ -106,7 +107,7 @@ def main(argv=None):
         if not step(f"Step 4: cluster ({mode}, {method})", lambda: cluster.run(
                 a.data_dir, mode, method, a.k, a.max_k, a.city_k, a.seed, a.min_cluster_size)):
             continue
-        step(f"Step 5b: compare ({mode})", lambda: compare.run(a.data_dir, mode, a.truth))
+        step(f"Step 5b: compare ({mode})", lambda: compare.run(a.data_dir, mode, a.truth, a.measure))
 
     if a.engine == "spark":
         from analysis.spark_utils import stop_spark

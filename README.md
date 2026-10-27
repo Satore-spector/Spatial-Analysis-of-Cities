@@ -18,6 +18,8 @@ We download open map data for many cities, turn each city into a set of image-li
 | 4. Unsupervised neural network | Built (`analysis/train.py`); tested on fake cities, run on Bengaluru (tile mode) |
 | 5. Clustering and checking against known measures | Built (`analysis/cluster.py`, `classical.py`, `compare.py`); tested on fake cities, run on Bengaluru |
 
+A country-wide run (every GHSL urban centre over 100,000 people, e.g. all of India) is built and tested offline: see "Classifying every city in a country" below. It has not yet been run on real data.
+
 Steps 3-5 are tested on fake cities with a known answer (`python run_analysis.py --test`) and have run on one real city, Bengaluru, in tile mode. Comparing cities with each other needs at least 3 cities; that is the next run.
 
 ## First results: Bengaluru (one city, tile mode)
@@ -50,8 +52,9 @@ data_extraction/
   data_extraction_osm.R     Step 1: boundary, POIs, buildings, roads from OSM
   amenity_wrap.R            Groups raw OSM tags into POI categories and plots them
   ghsl_builtup_capitals.R   Step 1: GHSL built-up surface (10 m) from Google Earth Engine
-  build_city_list.py        Step 1: list of US urban centres + boundaries from GHS-UCDB
-  ghsl_builtup_100m.py      Step 1: GHSL built-up surface (100 m) for the US city list
+  build_city_list.py        Step 1: list of urban centres + boundaries from GHS-UCDB (any country)
+  osm_batch_extract.py      Step 1: OSM for hundreds of cities, one read per regional file
+  ghsl_builtup_100m.py      Step 1: GHSL built-up surface (100 m) for a city list
 run_pipeline.R              Runs the R steps in order (with --check / --test modes)
 analysis/                   Steps 2-5 in Python
   rasterize.py              Step 2: .gpkg files -> grids (numpy or Spark SQL)
@@ -61,7 +64,9 @@ analysis/                   Steps 2-5 in Python
   cluster.py                Step 4: groups, 2D map, group profiles
   classical.py              Step 5: rule-based subcentre tests
   compare.py                Step 5: do the network's groups match the tests?
+  classify.py               Country runs: one type per city, map, report
 run_analysis.py             Runs steps 2-5 in one go
+run_country.py              Classifies every city in a country (list -> OSM -> GHSL -> 2-5 -> types)
 requirements.txt            Python packages
 tests/                      Offline tests (fake data, no downloads)
 data/                       Inputs and outputs (not committed, see below)
@@ -158,6 +163,45 @@ Where the results go:
 - `data/analysis/classical/` classical measures per city and a map of each city's centres
 - `data/analysis/city/` and `data/analysis/tile/`: embeddings, groups, maps, and `comparison_report.md`, the plain-language summary of whether the network's groups match the classical tests
 
+## Classifying every city in a country (India)
+
+`run_country.py` runs the whole chain for every GHSL urban centre in a country with more than 100,000 people. It uses one boundary rule for all cities, pulls OSM and GHSL data for each, runs steps 2-5, and gives every city a type.
+
+```
+python run_country.py --test                                  offline test on fake cities (3-5 min, no internet)
+python run_country.py --country India --project MY_GCP_PROJECT --limit 20     first, the 20 largest cities
+python run_country.py --country India --project MY_GCP_PROJECT                then all of them
+```
+
+Stages, each resumable (rerun the same command after a crash and finished work is kept):
+
+| Stage | Script | What it does |
+|---|---|---|
+| `list` | `data_extraction/build_city_list.py` | GHSL urban centres over `--min-pop` (default 100,000), one boundary each. Downloads the global UCDB once (about 1.7 GB, kept in `data/uc/`) |
+| `osm` | `data_extraction/osm_batch_extract.py` | Downloads the six Geofabrik India zone files (about 1.6 GB, resumable, checksum-checked; kept in `data/osm_pbf/`), then reads each file once and hands every POI, building and road to the cities it lies in |
+| `ghsl` | `data_extraction/ghsl_builtup_100m.py` | GHSL built-up surface at 100 m from Earth Engine, one request per city (needs `--project`) |
+| `analysis` | steps 2-5 | Grids; classical tests on GHSL built-up and on OSM POIs; autoencoder and groups in tile and city mode |
+| `classify` | `analysis/classify.py` | One type per city, a map and a report |
+
+Everything goes into `data/india/`, so it does not mix with the US runs or the earlier Bengaluru run. Results are in `data/india/analysis/classification/`:
+
+- `report.md`: the answer in plain words (counts of each type, by city size, GHSL vs OSM agreement, network check, largest polycentric cities, caveats)
+- `city_types.csv`: one row per city with its type, confidence and all the evidence
+- `city_types.gpkg`: the same with boundaries, to open in QGIS
+- `city_types_map.png`: every city on a map, by type and by network group
+
+**How a city's type is decided (GHSL first, OSM as support).** The classical centre tests run on the GHSL built-up layer, which comes from satellites and covers every city equally. If the Giuliano-Small and McMillen style tests agree, that is the type: confidence "high" if the OSM POI tests agree and the city is well mapped, otherwise "medium". If the GHSL tests disagree, the OSM tests decide (confidence "low"), but only for cities that are not very sparsely mapped; otherwise the city is "unclear". Each city's OSM mapping quality is POIs per km² of built-up area, compared with the median city.
+
+**What the network learns from.** By default the network sees only GHSL built-up and roads (`--network-layers ghsl`), not POIs or buildings. In the fake-city test, a network trained on every layer grouped the badly mapped cities together instead of grouping by shape. With built-up and roads it separated one-centre from several-centre cities. `--network-layers all` uses every layer; the report then checks whether the groups follow mapping quality and warns if they do.
+
+**Things to know before the full run:**
+- Space: about 1.7 GB (UCDB) + 1.6 GB (OSM) + several GB of temporary files while reading OSM (in `data/osm_pbf/tmp/`), plus the city files. Keep the project outside OneDrive.
+- Time: the OSM stage reads each zone file three times (points, areas, lines); expect hours for all of India, but it does not grow with the number of cities. Steps 2-5 take roughly a few seconds to a minute per city; `--workers 4` grids several cities at once if you have the memory.
+- Very large urban centres: the GHSL database joins built-up areas that touch on its 1 km grid, so parts of Kerala and the Gangetic plain can come out as one "city" the size of a district. The list marks them `large_area=True` and the report lists them; read their type as a statement about the region.
+- With hundreds of cities, city mode (one image per city) has enough examples to be worth reading, alongside tile mode.
+- `osm_batch_extract.py` replaces the R extraction for country runs; the R script still works for one-off cities.
+- Tested offline only (fake cities, fake OSM files, fake GHSL rasters). The first real run with `--limit 20` is the check that the downloads and Earth Engine work on your machine.
+
 ## First three-city run (US, one boundary definition)
 
 A small, controlled test before scaling up. Three US cities from the literature, all with the same GHSL urban-centre boundary and similar OpenStreetMap quality, so differences are less likely to come from mapping effort or boundary rules:
@@ -210,7 +254,7 @@ Where we may add something: combining POIs, buildings and roads in one input, co
 
 ## Next steps
 
-1. Run the extraction for more cities and check the summary table.
-2. Run `python run_analysis.py --mode tile` on the real cities and read `comparison_report.md`.
-3. Look at `cluster_profiles.png` and `tile_maps.png` to name the groups, and check they are not just "well mapped vs poorly mapped".
-4. Read the related work above, and settle the boundary definition before adding many more cities.
+1. `python run_country.py --test`, then `python run_country.py --country India --project MY_GCP_PROJECT --limit 20` as a first real run; check `osm_extraction_summary.csv`, `ghsl/ghsl_100m_summary.csv` and the report.
+2. Then all of India. Read `data/india/analysis/classification/report.md`, especially the GHSL vs OSM agreement and the mapping-quality check.
+3. Look at `cluster_profiles.png` and `tile_maps.png` to name the network's groups, and at the very large urban centres by hand.
+4. Read the related work above.

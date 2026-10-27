@@ -140,52 +140,66 @@ def aggregate_numpy(prep: dict) -> np.ndarray:
     return grid
 
 
-def aggregate_spark(preps: list[dict], staging: Path) -> dict[str, np.ndarray]:
-    """Sum weights per (city, layer, cell) for all cities in one Spark job.
+def stage_points(prep: dict, staging: Path) -> dict:
+    """Write one city's point table to staging/points/city=<slug>/ and drop it from memory."""
+    d = staging / "points" / f"city={prep['slug']}"
+    if d.exists():
+        shutil.rmtree(d)
+    d.mkdir(parents=True)
+    prep["points"].to_parquet(d / "part-0.parquet", index=False)
+    light = {k: v for k, v in prep.items() if k != "points"}
+    light["n_points"] = len(prep["points"])
+    return light
 
-    The point tables are written as one Parquet dataset partitioned by city
-    (staging/points/city=<slug>/), the grid definitions as a small table, and
-    Spark does:  join -> compute cell row/col -> drop points off the grid ->
-    group by (city, layer, row, col) -> sum.
+
+def aggregate_spark(metas: list[dict], staging: Path, rows_per_job: int = 30_000_000):
+    """Sum weights per (city, layer, cell) with Spark SQL; yields (slug, grid) per city.
+
+    Reads the staged Parquet dataset (one folder per city) and the grid
+    definitions, then:  join -> cell row/col -> drop points off the grid ->
+    group by (city, layer, row, col) -> sum. Cities are processed in batches of
+    about rows_per_job input rows, so the totals brought back to Python stay a
+    manageable size however many cities there are. Spark only reads files here,
+    which avoids the extra Hadoop setup that writing needs on Windows.
     """
     from pyspark.sql import functions as F
 
     from .spark_utils import get_spark
 
-    if staging.exists():
-        shutil.rmtree(staging)
-    (staging / "points").mkdir(parents=True)
-    for p in preps:
-        d = staging / "points" / f"city={p['slug']}"
-        d.mkdir()
-        p["points"].to_parquet(d / "part-0.parquet", index=False)
-    grids = pd.DataFrame([{k: p[k] for k in ("slug", "x0", "y1", "cell", "nrows", "ncols")} for p in preps])
+    grids = pd.DataFrame([{k: m[k] for k in ("slug", "x0", "y1", "cell", "nrows", "ncols")} for m in metas])
     grids = grids.rename(columns={"slug": "city"})
     grids.to_parquet(staging / "grids.parquet", index=False)
-    n_rows = sum(len(p["points"]) for p in preps)
-    say(f"  Spark: aggregating {n_rows:,} rows from {len(preps)} cities")
-
     spark = get_spark()
     pts = spark.read.parquet(str(staging / "points"))
     grid = spark.read.parquet(str(staging / "grids.parquet"))
-    cells = (pts.join(F.broadcast(grid), on="city")
-             .withColumn("col", F.floor((F.col("x") - F.col("x0")) / F.col("cell")).cast("long"))
-             .withColumn("row", F.floor((F.col("y1") - F.col("y")) / F.col("cell")).cast("long"))
-             .where((F.col("row") >= 0) & (F.col("row") < F.col("nrows")) &
-                    (F.col("col") >= 0) & (F.col("col") < F.col("ncols")))
-             .groupBy("city", "channel", "row", "col")
-             .agg(F.sum("w").alias("w")))
-    res = cells.toPandas()
-    say(f"  Spark: {len(res):,} non-empty (city, layer, cell) totals")
 
-    out = {}
-    for p in preps:
-        r = res[res.city == p["slug"]]
-        g = np.zeros((len(CHANNELS), p["nrows"], p["ncols"]))
-        g[r.channel.to_numpy(np.int64), r.row.to_numpy(np.int64), r.col.to_numpy(np.int64)] = r.w.to_numpy()
-        out[p["slug"]] = g
-    shutil.rmtree(staging, ignore_errors=True)
-    return out
+    batches, cur, n = [], [], 0
+    for m in metas:
+        cur.append(m)
+        n += m["n_points"]
+        if n >= rows_per_job:
+            batches.append(cur)
+            cur, n = [], 0
+    if cur:
+        batches.append(cur)
+    for b, batch in enumerate(batches, 1):
+        names = [m["slug"] for m in batch]
+        say(f"  Spark job {b}/{len(batches)}: {sum(m['n_points'] for m in batch):,} rows, {len(batch)} cities")
+        cells = (pts.where(F.col("city").isin(names))
+                 .join(F.broadcast(grid), on="city")
+                 .withColumn("col", F.floor((F.col("x") - F.col("x0")) / F.col("cell")).cast("long"))
+                 .withColumn("row", F.floor((F.col("y1") - F.col("y")) / F.col("cell")).cast("long"))
+                 .where((F.col("row") >= 0) & (F.col("row") < F.col("nrows")) &
+                        (F.col("col") >= 0) & (F.col("col") < F.col("ncols")))
+                 .groupBy("city", "channel", "row", "col")
+                 .agg(F.sum("w").alias("w")))
+        res = cells.toPandas()
+        by_city = dict(tuple(res.groupby("city")))
+        for m in batch:
+            r = by_city.get(m["slug"], res.iloc[:0])
+            g = np.zeros((len(CHANNELS), m["nrows"], m["ncols"]))
+            g[r.channel.to_numpy(np.int64), r.row.to_numpy(np.int64), r.col.to_numpy(np.int64)] = r.w.to_numpy()
+            yield m["slug"], g
 
 
 # ---- Stage 3: finish --------------------------------------------------------
@@ -292,42 +306,82 @@ def preview(path, total, mask, centre, slug, cell):
 # ---- Run --------------------------------------------------------------------
 
 
-def run(data_dir, cities=None, cell=100.0, poi_source="both", force=False, engine="pandas"):
+def rasterize_one(slug: str, data_dir, cell: float, poi_source: str) -> dict:
+    """Prepare, count and save one city (numpy engine). Top-level so it can run in a worker process."""
+    data_dir = Path(data_dir)
+    try:
+        prep = prepare_city(slug, data_dir, cell, poi_source)
+        return finish_city(prep, aggregate_numpy(prep), data_dir, poi_source, "pandas")
+    except Exception as e:  # one bad city must not stop the rest
+        say(f"  {slug}: FAILED: {e}")
+        return {"city": slug, "status": "error", "message": str(e)[:300]}
+
+
+def run(data_dir, cities=None, cell=100.0, poi_source="both", force=False, engine="pandas", workers=1):
+    """Grids for every city. One city at a time, so memory does not grow with the
+    number of cities; finished cities are skipped on a rerun (unless force)."""
     data_dir = Path(data_dir)
     slugs = find_cities(data_dir, cities)
     if not slugs:
-        raise SystemExit(f"No cities found in {data_dir}. Run data_extraction_osm.R first.")
-    rows, preps = [], []
-    say(f"Preparing {len(slugs)} cities")
+        raise SystemExit(f"No cities found in {data_dir}. Run the OSM extraction first.")
+    rows, todo = [], []
     for slug in slugs:
         if not force and (raster_dir(data_dir) / f"{slug}.npz").exists():
-            say(f"  {slug}: grid exists, skipping (use --force to redo)")
             rows.append({"city": slug, "status": "skipped"})
-            continue
-        try:
-            preps.append(prepare_city(slug, data_dir, cell, poi_source))
-        except Exception as e:  # one bad city must not stop the rest
-            say(f"  {slug}: FAILED: {e}")
-            rows.append({"city": slug, "status": "error", "message": str(e)})
-
-    if preps:
-        say(f"Aggregating with {engine}")
-        if engine == "spark":
-            grids = aggregate_spark(preps, raster_dir(data_dir) / "_spark_staging")
         else:
-            grids = {p["slug"]: aggregate_numpy(p) for p in preps}
-        for p in preps:
+            todo.append(slug)
+    say(f"{len(slugs)} cities: {len(todo)} to grid, {len(slugs) - len(todo)} done earlier (use --force to redo)")
+    raster_dir(data_dir).mkdir(parents=True, exist_ok=True)
+
+    if engine == "spark" and todo:
+        staging = raster_dir(data_dir) / "_spark_staging"
+        if staging.exists():
+            shutil.rmtree(staging)
+        metas = []
+        for i, slug in enumerate(todo, 1):
             try:
-                rows.append(finish_city(p, grids[p["slug"]], data_dir, poi_source, engine))
+                metas.append(stage_points(prepare_city(slug, data_dir, cell, poi_source), staging))
             except Exception as e:
-                say(f"  {p['slug']}: FAILED: {e}")
-                rows.append({"city": p["slug"], "status": "error", "message": str(e)})
+                say(f"  {slug}: FAILED: {e}")
+                rows.append({"city": slug, "status": "error", "message": str(e)[:300]})
+        say(f"Aggregating {len(metas)} cities with Spark")
+        if metas:
+            for slug, g in aggregate_spark(metas, staging):
+                m = next(x for x in metas if x["slug"] == slug)
+                try:
+                    rows.append(finish_city(m, g, data_dir, poi_source, engine))
+                except Exception as e:
+                    say(f"  {slug}: FAILED: {e}")
+                    rows.append({"city": slug, "status": "error", "message": str(e)[:300]})
+        shutil.rmtree(staging, ignore_errors=True)
+    elif todo and workers > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            for i, row in enumerate(pool.map(rasterize_one, todo, [str(data_dir)] * len(todo),
+                                             [cell] * len(todo), [poi_source] * len(todo)), 1):
+                rows.append(row)
+                say(f"  [{i}/{len(todo)}] {row['city']}: {row['status']}")
+    else:
+        for i, slug in enumerate(todo, 1):
+            row = rasterize_one(slug, data_dir, cell, poi_source)
+            rows.append(row)
+            say(f"  [{i}/{len(todo)}] {slug}: {row['status']}")
 
     summary = pd.DataFrame(rows)
-    say("\n" + summary.to_string(index=False))
-    raster_dir(data_dir).mkdir(parents=True, exist_ok=True)
-    summary.to_csv(raster_dir(data_dir) / "rasterize_summary.csv", index=False)
+    # keep the rows of earlier runs for cities skipped this time
+    old_f = raster_dir(data_dir) / "rasterize_summary.csv"
+    if old_f.exists():
+        old = pd.read_csv(old_f)
+        keep = old[old["city"].isin(summary.loc[summary["status"] == "skipped", "city"]) & (old["status"] == "ok")]
+        summary = pd.concat([summary[~summary["city"].isin(keep["city"])], keep], ignore_index=True)
+    summary = summary.sort_values("city").reset_index(drop=True)
+    summary.to_csv(old_f, index=False)
+    say(summary["status"].value_counts().to_string())
+    if len(summary) <= 30:
+        say("\n" + summary.to_string(index=False))
     if (summary["status"] == "error").any():
+        bad = summary[summary["status"] == "error"]
+        say(f"{len(bad)} city/cities failed: " + ", ".join(bad["city"].head(20)))
         raise SystemExit(1)
     return summary
 
@@ -339,6 +393,8 @@ def add_args(ap):
     ap.add_argument("--force", action="store_true", help="redo cities that already have a grid")
     ap.add_argument("--engine", choices=["pandas", "spark"], default="pandas",
                     help="spark: count all cities in one Spark SQL job (needs Java + pyspark)")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="cities to grid in parallel (pandas engine; each worker needs a few GB of memory)")
 
 
 def main(argv=None):
@@ -347,7 +403,7 @@ def main(argv=None):
     ap.add_argument("--data-dir", default=str(DATA_DIR))
     add_args(ap)
     a = ap.parse_args(argv)
-    run(a.data_dir, a.cities, a.cell, a.poi_source, a.force, a.engine)
+    run(a.data_dir, a.cities, a.cell, a.poi_source, a.force, a.engine, a.workers)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download GHSL built-up surface at 100 m for every city in data/uc/us_cities.csv.
+"""Download GHSL built-up surface at 100 m for every city in a city list (default data/uc/us_cities.csv).
 
 Why 100 m: the Python analysis averages the 10 m GHSL layer onto a 100 m grid
 anyway, so the native 100 m product (GHS-BUILT-S, release P2023A) gives the same
@@ -13,6 +13,8 @@ Usage (from the project root, inside the project venv):
     python data_extraction/ghsl_builtup_100m.py --project=my-gcp-project
     python data_extraction/ghsl_builtup_100m.py --project=my-gcp-project --limit 10
     python data_extraction/ghsl_builtup_100m.py --project=my-gcp-project --only newyorkny losangelesca
+    python data_extraction/ghsl_builtup_100m.py --project=my-gcp-project \
+        --cities-csv data/india/uc/india_cities.csv --data-dir data/india
     (the project can also come from the EE_PROJECT environment variable)
 
 Output, in data/ghsl/:

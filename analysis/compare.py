@@ -26,8 +26,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from scipy.stats import kruskal
@@ -54,6 +52,34 @@ def scores(groups, labels):
             "ari": round(adjusted_rand_score(l, g), 3)}
 
 
+def learned_score(out, mode, cities=None):
+    """One number per city: the main direction of variation in what the network
+    learned about it (first principal component of its tile-type mix in tile
+    mode, of its embedding in city mode). None if there is too little to go on.
+    The sign is arbitrary."""
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
+    if mode == "tile":
+        f = out / "city_profiles.csv"
+        if not f.exists():
+            return None
+        feats = pd.read_csv(f).set_index("city").filter(like="share_group_")
+    else:
+        f = out / "embeddings.csv"
+        if not f.exists():
+            return None
+        feats = pd.read_csv(f).set_index("city").filter(regex=r"^z\d+$")
+    if cities is not None:
+        feats = feats.reindex(list(cities))
+    feats = feats.dropna()
+    if len(feats) < 5 or feats.shape[1] < 1:
+        return None
+    z = StandardScaler().fit_transform(feats) if feats.shape[1] > 1 else feats.to_numpy()
+    score = PCA(1).fit_transform(z)[:, 0] if z.shape[1] > 1 else z[:, 0]
+    return pd.Series(score, index=feats.index, name="learned_score")
+
+
 def ranking(df, out, mode):
     """Spearman correlation between each city's main learned score and classical measures.
 
@@ -62,23 +88,12 @@ def ranking(df, out, mode):
     component is the score.
     """
     from scipy.stats import spearmanr
-    from sklearn.decomposition import PCA
-    from sklearn.preprocessing import StandardScaler
 
-    if mode == "tile":
-        f = out / "city_profiles.csv"
-        if not f.exists():
-            return {}
-        feats = pd.read_csv(f).set_index("city").filter(like="share_group_")
-    else:
-        emb = pd.read_csv(out / "embeddings.csv").set_index("city")
-        feats = emb.filter(regex=r"^z\d+$")
-    feats = feats.reindex(df.city).dropna()
-    if len(feats) < 5 or feats.shape[1] < 1:
+    sc = learned_score(out, mode, df.city)
+    if sc is None:
         return {}
-    z = StandardScaler().fit_transform(feats) if feats.shape[1] > 1 else feats.to_numpy()
-    score = PCA(1).fit_transform(z)[:, 0] if z.shape[1] > 1 else z[:, 0]
-    d = df.set_index("city").loc[feats.index]
+    score = sc.to_numpy()
+    d = df.set_index("city").loc[sc.index]
     targets = {m: d[m] for m in ("gradient_r2", "gs_subcentres", "mcmillen_subcentres") if m in d}
     if "true_type" in d:
         targets["known answer (fake cities)"] = (d.true_type == "polycentric").astype(float)
@@ -91,12 +106,13 @@ def ranking(df, out, mode):
     return res
 
 
-def run(data_dir, mode, truth=None):
+def run(data_dir, mode, truth=None, measure="pois"):
     out = analysis_dir(data_dir, mode)
     cfile = out / "city_clusters.csv"
-    kfile = Path(data_dir) / "analysis" / "classical" / "classical_measures.csv"
+    from .classical import measures_file
+    kfile = measures_file(data_dir, measure)
     for f, step in ((cfile, f"python -m analysis.cluster --mode {mode}"),
-                    (kfile, "python -m analysis.classical")):
+                    (kfile, f"python -m analysis.classical --measure {measure}")):
         if not f.exists():
             raise SystemExit(f"Missing {f}. Run: {step}")
     df = pd.read_csv(cfile).merge(pd.read_csv(kfile), on="city", how="left")
@@ -105,7 +121,7 @@ def run(data_dir, mode, truth=None):
     df.to_csv(out / "comparison.csv", index=False)
 
     n_groups = df.city_cluster.nunique()
-    lines = [f"# Network groups vs classical measures ({mode} mode)", ""]
+    lines = [f"# Network groups vs classical measures ({mode} mode, classical tests on {measure})", ""]
     lines += [f"{len(df)} cities, {n_groups} network group(s).", ""]
     if len(df) < 10:
         lines += ["**Caution:** with fewer than 10 cities these numbers can easily happen by "
@@ -205,8 +221,10 @@ def main(argv=None):
     ap.add_argument("--data-dir", default=str(DATA_DIR))
     ap.add_argument("--mode", choices=["city", "tile"], required=True)
     ap.add_argument("--truth", default=None, help="optional CSV with city,true_type")
+    ap.add_argument("--measure", default="pois",
+                    help="which classical results to compare with (pois, built_up, ...)")
     a = ap.parse_args(argv)
-    run(a.data_dir, a.mode, a.truth)
+    run(a.data_dir, a.mode, a.truth, a.measure)
 
 
 if __name__ == "__main__":
