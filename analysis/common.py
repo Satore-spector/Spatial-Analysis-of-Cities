@@ -55,7 +55,7 @@ def find_cities(data_dir: Path, cities: list[str] | None = None) -> list[str]:
 
 # ---- Channels (layers) of each city grid -----------------------------------
 
-# POI categories. The rules below copy data_extraction/amenitiy_wrap.r exactly,
+# POI categories. The rules below copy data_extraction/amenity_wrap.R exactly,
 # including the order (the first rule that matches wins). If you change one,
 # change the other.
 POI_CATEGORIES = [
@@ -72,7 +72,7 @@ _LEISURE = {"cinema", "theatre", "community_centre", "arts_centre", "marketplace
 
 
 def poi_category(pois: pd.DataFrame) -> pd.Series:
-    """Vectorised version of the case_when() in amenitiy_wrap.r."""
+    """Vectorised version of the case_when() in amenity_wrap.R."""
     def has(col):
         return pois[col].notna() if col in pois else pd.Series(False, index=pois.index)
 

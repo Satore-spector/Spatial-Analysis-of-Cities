@@ -166,7 +166,7 @@ extract_city <- function(city) {
 
   # 2a. POIs mapped as nodes: shops, amenities, offices, transit, leisure, health.
   # NOTE: the WHERE clause must cover every tag the category scheme in
-  # amenitiy_wrap.r uses, otherwise those categories are undercounted.
+  # amenity_wrap.R uses, otherwise those categories are undercounted.
   node_pois <- do.call(oe_get, c(list(
     place = place, layer = "points", extra_tags = poi_tags,
     query = "SELECT osm_id, name, amenity, shop, office, public_transport,

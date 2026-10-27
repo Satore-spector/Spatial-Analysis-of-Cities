@@ -31,7 +31,7 @@ def check(name, ok, detail=""):
 
 
 def test_poi_categories():
-    """The Python categories must match amenitiy_wrap.r, including rule order."""
+    """The Python categories must match amenity_wrap.R, including rule order."""
     from analysis.common import poi_category
     cases = [  # (tags, expected)  - order-sensitive cases included
         ({"amenity": "restaurant", "shop": "bakery"}, "Food & drink"),
@@ -52,7 +52,7 @@ def test_poi_categories():
     df = pd.DataFrame([{c: t.get(c) for c in cols} for t, _ in cases])
     got = poi_category(df).tolist()
     want = [w for _, w in cases]
-    check("POI categories match amenitiy_wrap.r", got == want,
+    check("POI categories match amenity_wrap.R", got == want,
           "" if got == want else str([(g, w) for g, w in zip(got, want) if g != w]))
 
 

@@ -21,7 +21,7 @@ import pandas as pd
 from pyproj import CRS
 from shapely.geometry import LineString, Point, Polygon, box
 
-# Tags that land in each POI category in amenitiy_wrap.r: (column, value).
+# Tags that land in each POI category in amenity_wrap.R: (column, value).
 CBD_TAGS = [("office", "company"), ("amenity", "bank"), ("shop", "clothes"),
             ("amenity", "restaurant"), ("amenity", "cafe"), ("office", "it"),
             ("shop", "mall"), ("amenity", "atm"), ("tourism", "hotel")]

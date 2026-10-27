@@ -2,7 +2,7 @@
 #
 # Pipeline order:
 #   1. OSM extraction      data_extraction/data_extraction_osm.R
-#   2. POI category plots  data_extraction/amenitiy_wrap.r        (per city)
+#   2. POI category plots  data_extraction/amenity_wrap.R        (per city)
 #   3. GHSL built-up       data_extraction/ghsl_builtup_capitals.R
 #
 # HOW TO TEST (cheapest first; run from the project root):
@@ -62,7 +62,7 @@ preflight <- function(root, need_osm, need_plots, need_ghsl, project) {
 
   scripts <- c(
     if (need_osm) "data_extraction/data_extraction_osm.R",
-    if (need_plots) "data_extraction/amenitiy_wrap.r",
+    if (need_plots) "data_extraction/amenity_wrap.R",
     if (need_ghsl) "data_extraction/ghsl_builtup_capitals.R"
   )
   for (s in scripts) add(paste("file", s), file.exists(file.path(root, s)),
@@ -148,7 +148,7 @@ main <- function() {
   setwd(root)
 
   osm_script <- file.path("data_extraction", "data_extraction_osm.R")
-  plot_script <- file.path("data_extraction", "amenitiy_wrap.r")
+  plot_script <- file.path("data_extraction", "amenity_wrap.R")
   ghsl_script <- file.path("data_extraction", "ghsl_builtup_capitals.R")
   project <- opt("project", Sys.getenv("EE_PROJECT", unset = ""))
 

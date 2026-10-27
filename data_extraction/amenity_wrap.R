@@ -2,7 +2,7 @@ library(sf)
 library(dplyr)
 library(ggplot2)
 
-# Usage (from the project root): Rscript data_extraction/amenitiy_wrap.r [slug]
+# Usage (from the project root): Rscript data_extraction/amenity_wrap.R [slug]
 # slug is the lower-case city name used by data_extraction_osm.R (default: bengaluru)
 args <- commandArgs(trailingOnly = TRUE)
 slug <- if (length(args) >= 1) args[1] else "bengaluru"

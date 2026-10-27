@@ -13,7 +13,7 @@ Writes, to data/rasters/:
 
 Each cell is --cell metres square (default 100 m) in the city's local UTM
 projection, so cells have the same size in every city. Channels: the 10 POI
-categories from amenitiy_wrap.r (count per cell), building footprint share,
+categories from amenity_wrap.R (count per cell), building footprint share,
 major and minor road length, and GHSL built-up share (zeros if no GHSL file).
 
 How it works, in three stages:
