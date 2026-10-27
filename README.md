@@ -158,6 +158,28 @@ Where the results go:
 - `data/analysis/classical/` classical measures per city and a map of each city's centres
 - `data/analysis/city/` and `data/analysis/tile/`: embeddings, groups, maps, and `comparison_report.md`, the plain-language summary of whether the network's groups match the classical tests
 
+## First three-city run (US, one boundary definition)
+
+A small, controlled test before scaling up. Three US cities from the literature, all with the same GHSL urban-centre boundary and similar OpenStreetMap quality, so differences are less likely to come from mapping effort or boundary rules:
+
+| Role | City | Why |
+|---|---|---|
+| Monocentric | Boston | One dominant downtown |
+| Polycentric | Los Angeles | The standard example of many centres |
+| Other | Atlanta | Low-density, dispersed, no strong core |
+
+These labels come from the literature and are expectations, not facts: the classical tests (`classical.py`) decide whether the data agrees. The network never sees the labels; it is unsupervised. The labels are only used afterwards to check whether the groups it finds line up with them. Three cities is the minimum for a comparison and is not enough to claim anything general.
+
+```
+python data_extraction/build_city_list.py
+grep -iE "^(bostonma|losangelesca|atlantaga)|,Boston|,Los Angeles|,Atlanta" data/uc/us_cities.csv   # confirm slugs and city strings
+Rscript data_extraction/data_extraction_osm.R "Boston MA, USA" "Los Angeles CA, USA" "Atlanta GA, USA"
+python data_extraction/ghsl_builtup_100m.py --project=MY_GCP_PROJECT --only bostonma losangelesca atlantaga
+python run_analysis.py --mode tile bostonma losangelesca atlantaga
+```
+
+The city string passed to R must produce the same slug as in `us_cities.csv` (letters only, e.g. `bostonma`). Los Angeles and Atlanta are big: expect large downloads (Geofabrik California and Georgia extracts) and long runs, and add `--cell 200` if memory runs out.
+
 ## Things to know about the data
 
 - **POIs come from two places.** Some are single points on the map (`poi_source = "node"`), and some are drawn as shapes and converted to one point each (`poi_source = "area"`). Some places may appear twice, once as each. Parks and other leisure places are mostly shapes, so that category is large.

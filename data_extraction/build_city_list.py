@@ -17,6 +17,9 @@ Output:
     data/uc/us_urban_centres.gpkg    all selected polygons in one file (EPSG:4326)
     data/<slug>_boundary.gpkg        one boundary per city, in the file name the
                                      Python analysis expects (EPSG:4326)
+    data/boundaries/<slug>.gpkg      the same polygon, where data_extraction_osm.R
+                                     looks for a custom boundary (so OSM extraction
+                                     uses this footprint, not a place-name search)
 
 Slugs follow the project's rule (letters only, lower case) and add the state
 abbreviation so that the many cities with the same name stay apart, for example
@@ -241,15 +244,20 @@ def main() -> None:
     say(f"Wrote {csv} and {cache / 'us_urban_centres.gpkg'}")
 
     if not args.no_boundaries:
+        # Two copies, because two scripts look in different places:
+        #   data/boundaries/<slug>.gpkg   read by data_extraction_osm.R (overrides the place-name search)
+        #   data/<slug>_boundary.gpkg     read by ghsl_builtup_100m.py and the Python analysis
+        bdir = args.data_dir / "boundaries"
+        bdir.mkdir(parents=True, exist_ok=True)
         n = 0
         for row in sel.itertuples():
-            f = args.data_dir / f"{row.slug}_boundary.gpkg"
-            if f.exists() and not args.force:
-                continue
-            gpd.GeoDataFrame({"city": [row.city], "ucid": [row.ucid]},
-                             geometry=[row.geometry], crs=4326).to_file(f, driver="GPKG")
-            n += 1
-        say(f"Wrote {n} boundary files to {args.data_dir}/ (existing ones kept; --force to overwrite)")
+            for f in (bdir / f"{row.slug}.gpkg", args.data_dir / f"{row.slug}_boundary.gpkg"):
+                if f.exists() and not args.force:
+                    continue
+                gpd.GeoDataFrame({"city": [row.city], "ucid": [row.ucid]},
+                                 geometry=[row.geometry], crs=4326).to_file(f, driver="GPKG")
+                n += 1
+        say(f"Wrote {n} boundary files to {args.data_dir}/ and {bdir}/ (existing ones kept; --force to overwrite)")
 
     say("\nLargest five:\n" + sel[["city", "pop", "area_km2"]].head().to_string(index=False))
 
