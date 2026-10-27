@@ -1,7 +1,7 @@
-boundry_file/
+# Data inputs and outputs: large, generated locally, never committed
 data/
 
-# Python virtual environments (created by setup_env.py) - never commit these
+# Python virtual environments (created by setup_env.py)
 .venv/
 venv/
 env/
@@ -15,6 +15,11 @@ __pycache__/
 .Rhistory
 .RData
 .Rproj.user/
+Rplots*.pdf
 
-# remove 
+# Editor / OS
+.vscode/
+.DS_Store
+
+# One-off patch files (apply them, then delete; the change lives in git history)
 *.patch
