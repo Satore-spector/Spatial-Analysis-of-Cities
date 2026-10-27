@@ -1,0 +1,517 @@
+diff --git a/data_extraction/build_city_list.py b/data_extraction/build_city_list.py
+new file mode 100644
+index 0000000..4a8ec72
+--- /dev/null
++++ b/data_extraction/build_city_list.py
+@@ -0,0 +1,258 @@
++#!/usr/bin/env python3
++"""Build the list of US urban centres above a population cutoff.
++
++Source: GHSL Urban Centre Database R2024A (GHS-UCDB), European Commission JRC,
++CC BY 4.0. Each urban centre is a polygon defined on a 1 km grid by population
++and built-up-share cutoffs, so the list is consistent across the whole country
++and needs no name lookups in OpenStreetMap.
++
++Usage (from the project root, inside the project venv):
++    python data_extraction/build_city_list.py
++    python data_extraction/build_city_list.py --min-pop 100000
++    python data_extraction/build_city_list.py --ucdb path/to/GHS_UCDB_GLOBE_R2024A.gpkg
++    python data_extraction/build_city_list.py --country "Canada"
++
++Output:
++    data/uc/us_cities.csv            one row per city (slug, name, state, population, ...)
++    data/uc/us_urban_centres.gpkg    all selected polygons in one file (EPSG:4326)
++    data/<slug>_boundary.gpkg        one boundary per city, in the file name the
++                                     Python analysis expects (EPSG:4326)
++
++Slugs follow the project's rule (letters only, lower case) and add the state
++abbreviation so that the many cities with the same name stay apart, for example
++"Portland OR, USA" -> portlandor.
++"""
++
++from __future__ import annotations
++
++import argparse
++import re
++import sys
++import urllib.request
++import zipfile
++from pathlib import Path
++
++import geopandas as gpd
++import pandas as pd
++
++# The global GeoPackage is a ~1.7 GB zip. If this address ever changes, download
++# it from https://human-settlement.emergency.copernicus.eu/ghs_ucdb_2024.php and
++# pass the file with --ucdb.
++UCDB_URL = (
++    "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_UCDB_GLOBE_R2024A/"
++    "GHS_UCDB_GLOBE_R2024A/V1-0/GHS_UCDB_GLOBE_R2024A_V1_0.zip"
++)
++# US state outlines, used only to add a state abbreviation to each city name.
++STATES_URL = "https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_state_20m.zip"
++
++US_NAMES = {"united states", "united states of america", "usa", "us"}
++
++
++def say(msg: str) -> None:
++    print(msg, flush=True)
++
++
++def download(url: str, dest: Path) -> Path:
++    dest.parent.mkdir(parents=True, exist_ok=True)
++    say(f"Downloading {url}")
++
++    def hook(blocks, block_size, total):
++        if total > 0 and blocks % 2000 == 0:
++            say(f"  {min(blocks * block_size, total) / 1e6:,.0f} / {total / 1e6:,.0f} MB")
++
++    urllib.request.urlretrieve(url, dest, hook)
++    return dest
++
++
++def get_ucdb(path: Path | None, cache: Path) -> Path:
++    """Return the path to the UCDB GeoPackage, downloading and unzipping if needed."""
++    if path:
++        path = Path(path)
++        if path.suffix.lower() == ".zip":
++            return unzip_gpkg(path, cache)
++        return path
++    found = sorted(cache.glob("**/*UCDB*.gpkg"))
++    if found:
++        say(f"Using cached {found[0]}")
++        return found[0]
++    zpath = download(UCDB_URL, cache / "GHS_UCDB_GLOBE_R2024A_V1_0.zip")
++    return unzip_gpkg(zpath, cache)
++
++
++def unzip_gpkg(zpath: Path, cache: Path) -> Path:
++    with zipfile.ZipFile(zpath) as z:
++        names = [n for n in z.namelist() if n.lower().endswith(".gpkg")]
++        if not names:
++            sys.exit(f"No .gpkg inside {zpath}. Contents: {z.namelist()[:10]}")
++        say(f"Extracting {names[0]}")
++        z.extract(names[0], cache)
++    return cache / names[0]
++
++
++def resolve(cols, prefix: str, year: int | None):
++    """Pick the column starting with `prefix`, preferring `year`, else the latest year."""
++    cands = [c for c in cols if c.upper().startswith(prefix)]
++    if not cands:
++        return None
++    if year:
++        for c in cands:
++            if c.endswith(str(year)):
++                return c
++    return sorted(cands)[-1]
++
++
++def load_ucdb(gpkg: Path, year: int | None) -> gpd.GeoDataFrame:
++    """Read the UCDB and return geometry + id, name, country, population columns.
++
++    The columns are found by prefix (GC_UCN_MAI_*, GC_CNT_GAD_*, GC_POP_TOT_*) so a
++    small change in the year suffix does not break the script. If the attributes are
++    spread over several layers they are joined on ID_UC_G0.
++    """
++    import pyogrio
++
++    layers = [row[0] for row in pyogrio.list_layers(gpkg)]
++    say(f"Layers in {gpkg.name}: {layers}")
++    wanted = {"name": "GC_UCN_MAI_", "country": "GC_CNT_GAD_", "pop": "GC_POP_TOT_"}
++    geom_layer, frames, picked = None, {}, {}
++    for lyr in layers:
++        head = gpd.read_file(gpkg, layer=lyr, rows=1)
++        if geom_layer is None and head.geometry.notna().any() and \
++                head.geometry.iloc[0].geom_type in ("Polygon", "MultiPolygon"):
++            geom_layer = lyr
++        frames[lyr] = list(head.columns)
++        for key, prefix in wanted.items():
++            col = resolve(head.columns, prefix, year)
++            if col and key not in picked:
++                picked[key] = (lyr, col)
++    missing = [k for k in wanted if k not in picked]
++    if geom_layer is None or missing:
++        for lyr, cols in frames.items():
++            say(f"  {lyr}: {cols[:40]}")
++        sys.exit(f"Could not find the polygon layer or columns {missing}. "
++                 "Check the column names above and adjust `wanted` in this script.")
++
++    gdf = gpd.read_file(gpkg, layer=geom_layer)
++    idcol = next((c for c in gdf.columns if c.upper() == "ID_UC_G0"), None)
++    out = gdf[[idcol, "geometry"]].copy() if idcol else gdf[["geometry"]].copy()
++    for key, (lyr, col) in picked.items():
++        if lyr == geom_layer:
++            out[key] = gdf[col].values
++        else:
++            if not idcol:
++                sys.exit(f"{col} is in layer {lyr}, but there is no ID_UC_G0 to join on.")
++            other = gpd.read_file(gpkg, layer=lyr, ignore_geometry=True)[[idcol, col]]
++            out = out.merge(other.rename(columns={col: key}), on=idcol, how="left")
++    out = out.rename(columns={idcol: "ucid"}) if idcol else out.assign(ucid=range(len(out)))
++    say("Columns used: " + ", ".join(f"{k}={c}" for k, (_, c) in picked.items()))
++    return gpd.GeoDataFrame(out, geometry="geometry", crs=gdf.crs)
++
++
++def add_state(gdf: gpd.GeoDataFrame, cache: Path) -> gpd.GeoDataFrame:
++    """Add a `state` abbreviation from the centroid of each city, if the outlines download."""
++    gdf = gdf.copy()
++    gdf["state"] = ""
++    try:
++        zpath = cache / "us_states.zip"
++        if not zpath.exists():
++            urllib.request.urlretrieve(STATES_URL, zpath)
++        states = gpd.read_file(f"zip://{zpath}").to_crs(4326)
++        col = "STUSPS" if "STUSPS" in states.columns else states.columns[0]
++        cent = gpd.GeoDataFrame(geometry=gdf.geometry.representative_point(), crs=4326)
++        joined = gpd.sjoin(cent, states[[col, "geometry"]], how="left", predicate="within")
++        joined = joined[~joined.index.duplicated()]
++        gdf["state"] = joined[col].fillna("").astype(str).values
++        # centroids just offshore (coastal cities): take the nearest state instead
++        for i in gdf.index[gdf["state"] == ""]:
++            p = cent.geometry.loc[i]
++            gdf.loc[i, "state"] = states.iloc[states.distance(p).values.argmin()][col]
++    except Exception as e:  # no network, changed address, ... -> numbered suffixes instead
++        say(f"  (state lookup skipped: {e}); duplicate names get a letter suffix instead")
++    return gdf
++
++
++def make_slugs(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
++    """Unique, letters-only slugs that follow the project's city_slug() rule."""
++    gdf = gdf.copy()
++    base = (gdf["name"].astype(str) + gdf["state"].astype(str)).str.lower().str.replace(
++        r"[^a-z]", "", regex=True)
++    base = base.where(base != "", "city")
++    slugs, seen = [], {}
++    for b in base:  # gdf is sorted by population, so the biggest keeps the plain name
++        n = seen.get(b, 0)
++        seen[b] = n + 1
++        slugs.append(b if n == 0 else b + _letters(n))
++    gdf["slug"] = slugs
++    st = gdf["state"].replace("", pd.NA)
++    gdf["city"] = [
++        f"{n} {s}, USA" if isinstance(s, str) else f"{n}, USA" for n, s in zip(gdf["name"], st)
++    ]
++    return gdf
++
++
++def _letters(n: int) -> str:
++    """1 -> 'a', 2 -> 'b', ... 27 -> 'aa' (digits would be dropped by city_slug)."""
++    s = ""
++    while n > 0:
++        n, r = divmod(n - 1, 26)
++        s = chr(97 + r) + s
++    return s
++
++
++def main() -> None:
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    ap.add_argument("--ucdb", type=Path, help="GHS-UCDB .gpkg or .zip you already downloaded")
++    ap.add_argument("--country", default="United States", help="country name as in the UCDB")
++    ap.add_argument("--min-pop", type=float, default=50_000, help="keep centres with MORE than this many people")
++    ap.add_argument("--year", type=int, default=2025, help="population/name year in the UCDB columns")
++    ap.add_argument("--data-dir", type=Path, default=Path("data"))
++    ap.add_argument("--no-boundaries", action="store_true", help="only write the list, not per-city boundary files")
++    ap.add_argument("--force", action="store_true", help="overwrite existing boundary files")
++    args = ap.parse_args()
++
++    cache = args.data_dir / "uc"
++    cache.mkdir(parents=True, exist_ok=True)
++    gdf = load_ucdb(get_ucdb(args.ucdb, cache), args.year)
++    say(f"{len(gdf):,} urban centres worldwide")
++
++    want = {args.country.lower()} | (US_NAMES if args.country.lower() in US_NAMES else set())
++    sel = gdf[gdf["country"].astype(str).str.lower().isin(want)]
++    if sel.empty:
++        like = sorted({c for c in gdf["country"].dropna().astype(str)
++                       if args.country.lower()[:4] in c.lower()})
++        sys.exit(f"No urban centres for country '{args.country}'. Similar values: {like[:10]}")
++    sel = sel[pd.to_numeric(sel["pop"], errors="coerce") > args.min_pop]
++    sel = sel.sort_values("pop", ascending=False).reset_index(drop=True)
++    say(f"{len(sel):,} urban centres in {args.country} with population > {args.min_pop:,.0f}")
++
++    sel["area_km2"] = (sel.to_crs("EPSG:6933").area / 1e6).round(1)
++    sel = sel.to_crs(4326)
++    if args.country.lower() in US_NAMES:
++        sel = add_state(sel, cache)
++    else:
++        sel["state"] = ""
++    sel = make_slugs(sel)
++    c = sel.geometry.representative_point()
++    sel["lon"], sel["lat"] = c.x.round(5), c.y.round(5)
++
++    cols = ["slug", "city", "name", "state", "pop", "area_km2", "lon", "lat", "ucid"]
++    csv = cache / "us_cities.csv"
++    sel[cols].to_csv(csv, index=False)
++    sel[cols + ["geometry"]].to_file(cache / "us_urban_centres.gpkg", driver="GPKG")
++    say(f"Wrote {csv} and {cache / 'us_urban_centres.gpkg'}")
++
++    if not args.no_boundaries:
++        n = 0
++        for row in sel.itertuples():
++            f = args.data_dir / f"{row.slug}_boundary.gpkg"
++            if f.exists() and not args.force:
++                continue
++            gpd.GeoDataFrame({"city": [row.city], "ucid": [row.ucid]},
++                             geometry=[row.geometry], crs=4326).to_file(f, driver="GPKG")
++            n += 1
++        say(f"Wrote {n} boundary files to {args.data_dir}/ (existing ones kept; --force to overwrite)")
++
++    say("\nLargest five:\n" + sel[["city", "pop", "area_km2"]].head().to_string(index=False))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/data_extraction/ghsl_builtup_100m.py b/data_extraction/ghsl_builtup_100m.py
+new file mode 100644
+index 0000000..fa38a5c
+--- /dev/null
++++ b/data_extraction/ghsl_builtup_100m.py
+@@ -0,0 +1,247 @@
++#!/usr/bin/env python3
++"""Download GHSL built-up surface at 100 m for every city in data/uc/us_cities.csv.
++
++Why 100 m: the Python analysis averages the 10 m GHSL layer onto a 100 m grid
++anyway, so the native 100 m product (GHS-BUILT-S, release P2023A) gives the same
++information with 100 times fewer pixels. One Earth Engine request per city is
++enough (a few MB), instead of dozens of tiles per city.
++
++Why epoch 2020 by default: it is the latest epoch built from observations. The
++2025 and 2030 layers in the same collection are projections. Change it with --epoch.
++
++Usage (from the project root, inside the project venv):
++    python data_extraction/ghsl_builtup_100m.py --project=my-gcp-project
++    python data_extraction/ghsl_builtup_100m.py --project=my-gcp-project --limit 10
++    python data_extraction/ghsl_builtup_100m.py --project=my-gcp-project --only newyorkny losangelesca
++    (the project can also come from the EE_PROJECT environment variable)
++
++Output, in data/ghsl/:
++    <slug>_ghs_built_s_<epoch>_100m.tif   built-up surface as % of each 100 m cell (0-100),
++                                           in the city's UTM zone, on a 100 m grid
++    ghsl_100m_summary.csv                 one row per city with sanity checks
++
++The values are scaled to 0-100 (the source stores m2 per cell, 0-10000) so that
++analysis/rasterize.py reads them unchanged: it divides by 100 to get a 0-1 share.
++
++Resumable: cities whose .tif already exists are skipped (--force to redo).
++Data: GHSL, European Commission JRC, CC BY 4.0 (credit the source).
++"""
++
++from __future__ import annotations
++
++import argparse
++import csv
++import io
++import os
++import sys
++import time
++import zipfile
++from concurrent.futures import ThreadPoolExecutor, as_completed
++from pathlib import Path
++
++import geopandas as gpd
++import numpy as np
++import rasterio
++from rasterio.features import geometry_mask
++from rasterio.merge import merge
++
++ASSET = "JRC/GHSL/P2023A/GHS_BUILT_S/{epoch}"
++BAND = "built_surface"  # m2 of buildings per 100 m x 100 m cell (0-10000)
++SCALE = 100
++MAX_SPLIT_DEPTH = 4
++
++
++def say(msg: str) -> None:
++    print(msg, flush=True)
++
++
++# ---- Earth Engine ------------------------------------------------------------
++
++
++def init_ee(project: str | None):
++    import ee
++
++    try:
++        ee.Initialize(project=project)
++    except Exception:
++        say("Earth Engine needs a login (a browser window will open).")
++        ee.Authenticate()
++        ee.Initialize(project=project)
++    return ee
++
++
++def fetch_bytes(ee, image, bbox, epsg: int) -> bytes:
++    """One getDownloadURL request for bbox = (minx, miny, maxx, maxy) in lon/lat.
++
++    crs_transform pins the grid to multiples of 100 m in the UTM zone, so tiles
++    fetched separately (see fetch_region) line up exactly.
++    """
++    import urllib.request
++
++    region = ee.Geometry.Rectangle(list(bbox), "EPSG:4326", False)
++    url = image.getDownloadURL({
++        "region": region, "crs": f"EPSG:{epsg}", "crs_transform": [SCALE, 0, 0, 0, -SCALE, 0],
++        "format": "GEO_TIFF",
++    })
++    with urllib.request.urlopen(url, timeout=300) as r:
++        data = r.read()
++    if data[:2] == b"PK":  # sometimes returned zipped
++        with zipfile.ZipFile(io.BytesIO(data)) as z:
++            data = z.read(next(n for n in z.namelist() if n.lower().endswith(".tif")))
++    return data
++
++
++def too_large(err: Exception) -> bool:
++    m = str(err).lower()
++    return "must be less than or equal to" in m or "too large" in m or "request size" in m
++
++
++def fetch_region(fetch, bbox, depth=0) -> bytes:
++    """Fetch bbox; if Earth Engine says it is too big, split it in two and mosaic."""
++    try:
++        return with_retries(lambda: fetch(bbox))
++    except Exception as e:
++        if not too_large(e) or depth >= MAX_SPLIT_DEPTH:
++            raise
++    x0, y0, x1, y1 = bbox
++    if (x1 - x0) >= (y1 - y0):
++        xm = (x0 + x1) / 2
++        parts = [(x0, y0, xm, y1), (xm, y0, x1, y1)]
++    else:
++        ym = (y0 + y1) / 2
++        parts = [(x0, y0, x1, ym), (x0, ym, x1, y1)]
++    return mosaic([fetch_region(fetch, p, depth + 1) for p in parts])
++
++
++def with_retries(fn, tries=4):
++    for i in range(tries):
++        try:
++            return fn()
++        except Exception as e:
++            if too_large(e) or i == tries - 1:
++                raise
++            time.sleep(5 * 2 ** i)
++
++
++def mosaic(pieces: list[bytes]) -> bytes:
++    files = [rasterio.MemoryFile(p) for p in pieces]
++    try:
++        srcs = [f.open() for f in files]
++        arr, transform = merge(srcs, nodata=srcs[0].nodata)
++        profile = srcs[0].profile
++        profile.update(height=arr.shape[1], width=arr.shape[2], transform=transform)
++        with rasterio.MemoryFile() as out:
++            with out.open(**profile) as dst:
++                dst.write(arr)
++            return out.read()
++    finally:
++        for f in files:
++            f.close()
++
++
++# ---- Per city ----------------------------------------------------------------
++
++
++def process_city(fetch, row, data_dir: Path, epoch: int, force: bool) -> dict:
++    slug = row["slug"]
++    out = data_dir / "ghsl" / f"{slug}_ghs_built_s_{epoch}_100m.tif"
++    bfile = data_dir / f"{slug}_boundary.gpkg"
++    if out.exists() and not force:
++        return {"slug": slug, "status": "skipped"}
++    if not bfile.exists():
++        return {"slug": slug, "status": "error", "message": f"missing {bfile.name}"}
++
++    b = gpd.read_file(bfile).to_crs(4326)
++    epsg = b.estimate_utm_crs().to_epsg()
++    minx, miny, maxx, maxy = b.total_bounds
++    pad = 0.01  # ~1 km, so cells on the edge of the boundary are complete
++    bbox = (minx - pad, miny - pad, maxx + pad, maxy + pad)
++
++    data = fetch_region(lambda bb: fetch(bb, epsg), bbox)
++    out.parent.mkdir(parents=True, exist_ok=True)
++    tmp = out.with_suffix(".tmp")
++    tmp.write_bytes(data)
++    tmp.replace(out)
++
++    # sanity numbers: built-up area inside the boundary, and its share of the boundary
++    with rasterio.open(out) as src:
++        arr = src.read(1).astype("float64")
++        nodata = src.nodata
++        inside = geometry_mask(b.to_crs(src.crs).geometry, out_shape=src.shape,
++                               transform=src.transform, invert=True)
++    if nodata is not None:
++        arr = np.where(arr == nodata, np.nan, arr)
++    cell_km2 = (SCALE / 1000) ** 2
++    vals = arr[inside]
++    built_km2 = float(np.nansum(vals)) / 100 * cell_km2
++    area_km2 = float(inside.sum()) * cell_km2
++    return {
++        "slug": slug, "status": "ok", "epoch": epoch, "utm_epsg": epsg,
++        "boundary_cells_km2": round(area_km2, 1),
++        "built_km2": round(built_km2, 2),
++        "built_pct": round(100 * built_km2 / area_km2, 1) if area_km2 else "",
++        "nan_cells_in_boundary": int(np.isnan(vals).sum()),
++    }
++
++
++def main() -> None:
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    ap.add_argument("--project", default=os.environ.get("EE_PROJECT"),
++                    help="Google Cloud project with Earth Engine enabled (or env EE_PROJECT)")
++    ap.add_argument("--cities-csv", type=Path, default=Path("data/uc/us_cities.csv"))
++    ap.add_argument("--data-dir", type=Path, default=Path("data"))
++    ap.add_argument("--epoch", type=int, default=2020, help="GHSL epoch (1975-2030 in 5-year steps)")
++    ap.add_argument("--workers", type=int, default=4, help="parallel Earth Engine requests")
++    ap.add_argument("--limit", type=int, help="only the first N cities (largest first)")
++    ap.add_argument("--only", nargs="*", help="only these slugs")
++    ap.add_argument("--force", action="store_true", help="redownload cities that already have a .tif")
++    ap.add_argument("--summary", default="ghsl_100m_summary.csv")
++    args = ap.parse_args()
++
++    if not args.project:
++        sys.exit("Pass your Google Cloud project: --project=<id> (or set EE_PROJECT).")
++    if not args.cities_csv.exists():
++        sys.exit(f"{args.cities_csv} not found. Run data_extraction/build_city_list.py first.")
++
++    with open(args.cities_csv, newline="") as f:
++        rows = list(csv.DictReader(f))
++    if args.only:
++        rows = [r for r in rows if r["slug"] in set(args.only)]
++    if args.limit:
++        rows = rows[: args.limit]
++    say(f"{len(rows)} cities, GHSL epoch {args.epoch}, {SCALE} m")
++
++    ee = init_ee(args.project)
++    image = ee.Image(ASSET.format(epoch=args.epoch)).select(BAND).divide(100).toFloat()
++
++    def fetch(bbox, epsg):
++        return fetch_bytes(ee, image, bbox, epsg)
++
++    results = []
++    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
++        futs = {pool.submit(process_city, fetch, r, args.data_dir, args.epoch, args.force): r for r in rows}
++        for i, fut in enumerate(as_completed(futs), 1):
++            r = futs[fut]
++            try:
++                res = fut.result()
++            except Exception as e:
++                res = {"slug": r["slug"], "status": "error", "message": str(e)[:300]}
++            results.append(res)
++            extra = f"{res.get('built_km2', '')} km2 built ({res.get('built_pct', '')}%)" if res["status"] == "ok" else res.get("message", "")
++            say(f"[{i}/{len(rows)}] {res['slug']}: {res['status']} {extra}")
++
++    out = args.data_dir / "ghsl" / args.summary
++    out.parent.mkdir(parents=True, exist_ok=True)
++    keys = sorted({k for r in results for k in r}, key=lambda k: (k != "slug", k != "status", k))
++    with open(out, "w", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=keys)
++        w.writeheader()
++        w.writerows(sorted(results, key=lambda r: r["slug"]))
++    bad = [r["slug"] for r in results if r["status"] == "error"]
++    say(f"\nSummary: {out}")
++    if bad:
++        say(f"{len(bad)} failed: {', '.join(bad[:20])}{' ...' if len(bad) > 20 else ''}. Re-run to retry them.")
++
++
++if __name__ == "__main__":
++    main()
