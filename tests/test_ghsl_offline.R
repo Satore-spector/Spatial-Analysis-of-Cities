@@ -30,6 +30,30 @@ check("tiles cover the whole bounding box",
       min(g$xmin) <= 77.45 && max(g$xmax) >= 77.78 && min(g$ymin) <= 12.83 && max(g$ymax) >= 13.14)
 check("a box exactly on one tile gives one tile", nrow(tile_grid(77.0, 12.0, 77.1, 12.1, 0.1)) == 1)
 
+cat("Pixel-exact download grid (native_grid)\n")
+moll_wkt <- paste0('PROJCS["World_Mollweide",GEOGCS["WGS 84",DATUM["WGS_1984",',
+                   'SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],',
+                   'UNIT["Degree",0.0174532925199433]],PROJECTION["Mollweide"],',
+                   'PARAMETER["central_meridian",0],PARAMETER["false_easting",0],',
+                   'PARAMETER["false_northing",0],UNIT["metre",1]]')
+tr <- c(10, 0, -18041000, 0, -10, 9000000) # [xScale, xShear, xTrans, yShear, yScale, yTrans]
+ng <- native_grid(77.5, 12.9, 77.6, 13.0, moll_wkt, tr)
+check("a 0.1 degree tile is about 1,200 x 1,200 cells",
+      !is.null(ng) && all(ng$dimensions > 1000 & ng$dimensions < 1400))
+check("tile corner sits on the 10 m grid",
+      abs(((ng$crs_transform[5] - tr[3]) / 10) %% 1) < 1e-9 &&
+        abs(((tr[6] - ng$crs_transform[6]) / 10) %% 1) < 1e-9)
+corners <- st_coordinates(st_transform(st_as_sf(
+  data.frame(x = c(77.5, 77.6, 77.5, 77.6), y = c(12.9, 12.9, 13.0, 13.0)),
+  coords = c("x", "y"), crs = 4326), st_crs(moll_wkt)))
+check("grid covers all four tile corners",
+      min(corners[, 1]) >= ng$crs_transform[5] &&
+        max(corners[, 1]) <= ng$crs_transform[5] + ng$dimensions[1] * 10 &&
+        max(corners[, 2]) <= ng$crs_transform[6] &&
+        min(corners[, 2]) >= ng$crs_transform[6] - ng$dimensions[2] * 10)
+check("returns NULL when the grid is not 10 m",
+      is.null(native_grid(77.5, 12.9, 77.6, 13.0, moll_wkt, c(100, 0, 0, 0, -100, 0))))
+
 cat("Mosaic, mask and sums on fake Mollweide tiles\n")
 centre <- st_sfc(st_point(c(77.59, 12.97)), crs = 4326)
 boundary <- st_sf(geometry = st_transform(st_buffer(st_transform(centre, 6933), 10000), 4326))

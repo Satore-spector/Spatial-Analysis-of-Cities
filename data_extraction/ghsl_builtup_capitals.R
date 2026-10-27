@@ -104,7 +104,7 @@ init_ee <- function(project) {
   # Newer reticulate installs Python packages on demand; this has to be declared
   # before Python starts. Older reticulate lacks it and needs py_install instead.
   if ("py_require" %in% getNamespaceExports("reticulate")) {
-    tryCatch(reticulate::py_require("earthengine-api"), error = function(e) NULL)
+    tryCatch(reticulate::py_require(c("earthengine-api", "requests")), error = function(e) NULL)
   }
   ee <- tryCatch(
     reticulate::import("ee"),
@@ -124,38 +124,104 @@ init_ee <- function(project) {
   ee
 }
 
+# Pixel-exact request for a lon/lat tile: snap it to the layer's own 10 m grid and
+# describe it by affine transform + size. No resampling, and tiles always line up.
+# `transform` is the projection transform reported by Earth Engine
+# [xScale, xShear, xTranslation, yShear, yScale, yTranslation]. Returns NULL if
+# it does not look like a 10 m north-up grid.
+native_grid <- function(xmin, ymin, xmax, ymax, crs, transform, cell = cell_size_m) {
+  transform <- suppressWarnings(as.numeric(unlist(transform)))
+  if (length(transform) != 6 || anyNA(transform) ||
+      abs(transform[1] - cell) > 1e-6 || abs(transform[5] + cell) > 1e-6) {
+    return(NULL)
+  }
+  # Walk along the tile edges so the curved edges in Mollweide are covered.
+  xs <- seq(xmin, xmax, length.out = 21)
+  ys <- seq(ymin, ymax, length.out = 21)
+  pts <- data.frame(
+    x = c(xs, xs, rep(xmin, 21), rep(xmax, 21)),
+    y = c(rep(ymin, 21), rep(ymax, 21), ys, ys)
+  )
+  m <- sf::st_coordinates(sf::st_transform(
+    sf::st_as_sf(pts, coords = c("x", "y"), crs = 4326), sf::st_crs(crs)))
+  ox <- transform[3]
+  oy <- transform[6]
+  x0 <- ox + floor((min(m[, 1]) - ox) / cell) * cell
+  y1 <- oy - floor((oy - max(m[, 2])) / cell) * cell
+  w <- ceiling((max(m[, 1]) - x0) / cell)
+  h <- ceiling((y1 - min(m[, 2])) / cell)
+  if (w < 1 || h < 1 || w > 10000 || h > 10000) return(NULL)
+  list(crs_transform = c(cell, 0, 0, -cell, x0, y1),
+       dimensions = c(as.integer(w), as.integer(h)))
+}
+
+# Fetch a URL with Python's requests, saving the body to `path` when it succeeds.
+# Done in Python so a failure returns Google's own error text, which R's
+# download.file() throws away. Returns list(status, text).
+fetch_url <- function(url, path) {
+  reticulate::py_run_string("
+def ghsl_fetch(url, path):
+    import requests
+    r = requests.get(url, timeout=900)
+    if r.status_code == 200:
+        with open(path, 'wb') as f:
+            f.write(r.content)
+        return [r.status_code, '']
+    return [r.status_code, r.text[:600]]
+")
+  res <- reticulate::py$ghsl_fetch(url, path)
+  list(status = as.integer(res[[1]]), text = trimws(gsub("\\s+", " ", res[[2]])))
+}
+
 # Download one lon/lat tile as a GeoTIFF in the image's native projection.
-download_tile <- function(ee, img, crs, xmin, ymin, xmax, ymax, dest, tries = 3) {
+# Tries a pixel-exact request first, then a region + scale request.
+download_tile <- function(ee, img, crs, transform, xmin, ymin, xmax, ymax, dest) {
   region <- ee$Geometry$Rectangle(c(xmin, ymin, xmax, ymax),
                                   proj = "EPSG:4326", geodesic = FALSE)
-  old <- options(timeout = 900)
-  on.exit(options(old), add = TRUE)
-  last_err <- NULL
-  for (i in seq_len(tries)) {
-    res <- tryCatch({
-      url <- img$getDownloadURL(list(
-        region = region, scale = cell_size_m, crs = crs,
-        format = "GEO_TIFF"
-      ))
-      tmp <- tempfile(fileext = ".bin")
-      utils::download.file(url, tmp, mode = "wb", quiet = TRUE)
-
-      # Normally a plain GeoTIFF; unzip in case Earth Engine returns a zip.
-      if (identical(readBin(tmp, "raw", 2), as.raw(c(0x50, 0x4b)))) {
-        td <- tempfile(); dir.create(td)
-        utils::unzip(tmp, exdir = td)
-        tif <- list.files(td, pattern = "\\.tif$", full.names = TRUE)[1]
-        file.copy(tif, tmp, overwrite = TRUE)
-      }
-      terra::rast(tmp) # fails here if the download is not a valid raster
-      file.copy(tmp, dest, overwrite = TRUE)
-      TRUE
-    }, error = function(e) { last_err <<- conditionMessage(e); FALSE })
-    if (isTRUE(res)) return(invisible(TRUE))
-    message("  tile attempt ", i, " failed: ", last_err)
-    Sys.sleep(2^i)
+  variants <- list()
+  ng <- tryCatch(native_grid(xmin, ymin, xmax, ymax, crs, transform),
+                 error = function(e) NULL)
+  if (!is.null(ng)) {
+    variants$native_grid <- list(crs = crs, crs_transform = ng$crs_transform,
+                                 dimensions = ng$dimensions, format = "GEO_TIFF")
   }
-  stop("Tile download failed after ", tries, " attempts: ", last_err, call. = FALSE)
+  variants$region_scale <- list(region = region, scale = cell_size_m, crs = crs,
+                                format = "GEO_TIFF")
+
+  errors <- character()
+  for (v in names(variants)) {
+    for (attempt in 1:3) {
+      out <- tryCatch({
+        url <- img$getDownloadURL(variants[[v]])
+        tmp <- tempfile(fileext = ".bin")
+        r <- fetch_url(url, tmp)
+        if (r$status != 200L) stop("HTTP ", r$status, ": ", r$text, call. = FALSE)
+
+        # Normally a plain GeoTIFF; unzip in case Earth Engine returns a zip.
+        if (identical(readBin(tmp, "raw", 2), as.raw(c(0x50, 0x4b)))) {
+          td <- tempfile(); dir.create(td)
+          utils::unzip(tmp, exdir = td)
+          tif <- list.files(td, pattern = "\\.tif$", full.names = TRUE)[1]
+          file.copy(tif, tmp, overwrite = TRUE)
+        }
+        terra::rast(tmp) # fails here if the download is not a valid raster
+        file.copy(tmp, dest, overwrite = TRUE)
+        TRUE
+      }, error = function(e) conditionMessage(e))
+
+      if (isTRUE(out)) {
+        if (v != names(variants)[1]) message("  tile fetched with the '", v, "' request style")
+        return(invisible(TRUE))
+      }
+      errors[v] <- out
+      # Retry only temporary problems (rate limit, server error); a 400 will not fix itself.
+      if (!grepl("HTTP (429|5[0-9][0-9])", out)) break
+      Sys.sleep(2^attempt)
+    }
+    message("  '", v, "' request failed: ", out)
+  }
+  stop("Tile download failed.\n", paste0("  ", names(errors), ": ", errors, collapse = "\n"),
+       call. = FALSE)
 }
 
 # ---- Mosaic, cut to the boundary, summarise (needs sf + terra, no Earth Engine)
@@ -237,7 +303,8 @@ process_city <- function(ee, img, crs, city, state, opts) {
   for (i in seq_len(nrow(grid))) {
     if (file.exists(tile_files[i])) next
     message("  downloading tile ", i, "/", nrow(grid))
-    download_tile(ee, img, crs, grid$xmin[i], grid$ymin[i], grid$xmax[i], grid$ymax[i],
+    download_tile(ee, img, crs, opts$native_transform,
+                  grid$xmin[i], grid$ymin[i], grid$xmax[i], grid$ymax[i],
                   tile_files[i])
   }
 
@@ -325,6 +392,7 @@ main <- function() {
     stop("Could not read the projection of ", ghsl_asset, ". Earth Engine returned ",
          "these fields: ", paste(names(pinfo), collapse = ", "), call. = FALSE)
   }
+  opts$native_transform <- unlist(pinfo$transform)
   message("Asset ", ghsl_asset, ", band ", ghsl_band, ", native CRS: ",
           gsub("\\s+", " ", substr(crs, 1, 70)))
 
