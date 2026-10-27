@@ -101,14 +101,17 @@ def city_samples(grids, channels, city_px, window_km):
     return xs, rows
 
 
-def tile_samples(grids, channels, tile_px, stride, min_inside, min_activity):
+def tile_samples(grids, channels, tile_px, stride, min_inside, min_activity, activity_layers="all"):
     xs, rows = [], []
     for slug, (grid, mask, meta) in grids.items():
         cell = meta["cell_m"]
         cr, cc = meta["centre_rc"]
         idx = [meta["channels"].index(c) for c in channels]
         sub = grid[idx]
-        activity = grid.sum(0)
+        if activity_layers == "poi":   # POI counts only, so --min-activity means "POIs per tile"
+            activity = grid[[i for i, c in enumerate(meta["channels"]) if c.startswith("poi_")]].sum(0)
+        else:                          # every layer; mixes counts, shares and road metres
+            activity = grid.sum(0)
         n0 = len(rows)
         for r0 in range(0, grid.shape[1] - tile_px + 1, stride):
             for c0 in range(0, grid.shape[2] - tile_px + 1, stride):
@@ -168,7 +171,7 @@ def smooth(grid, mask, meta, smooth_m):
 
 def build(data_dir, mode, cities=None, city_px=64, city_window_km=40, tile_px=32,
           tile_stride=None, min_inside=0.5, min_activity=1.0, how="city-share", channels="auto",
-          smooth_m=200.0):
+          smooth_m=200.0, activity_layers="all"):
     data_dir = Path(data_dir)
     slugs = [s for s in find_cities(data_dir, cities) if (raster_dir(data_dir) / f"{s}.npz").exists()]
     if not slugs:
@@ -187,7 +190,8 @@ def build(data_dir, mode, cities=None, city_px=64, city_window_km=40, tile_px=32
     if mode == "city":
         xs, rows = city_samples(grids, chosen, city_px, city_window_km)
     else:
-        xs, rows = tile_samples(grids, chosen, tile_px, tile_stride or tile_px, min_inside, min_activity)
+        xs, rows = tile_samples(grids, chosen, tile_px, tile_stride or tile_px, min_inside, min_activity,
+                                activity_layers)
     if not xs:
         raise SystemExit("No samples were made; try a lower --min-inside or --min-activity.")
     x, scale = normalise(xs, rows, grids, chosen, how)
@@ -220,6 +224,9 @@ def add_args(ap):
                     help="tile mode: keep tiles at least this share inside the boundary")
     ap.add_argument("--min-activity", type=float, default=1.0,
                     help="tile mode: skip tiles with (almost) nothing in them")
+    ap.add_argument("--activity", choices=["all", "poi"], default="all",
+                    help="tile mode: what --min-activity counts. 'all' sums every layer (counts, "
+                         "shares and road metres mixed); 'poi' counts POIs only")
     ap.add_argument("--smooth-m", type=float, default=200,
                     help="blur layers by this many metres before cutting (0 = off)")
     ap.add_argument("--normalise", choices=["city-share", "absolute"], default="city-share")
@@ -235,7 +242,7 @@ def main(argv=None):
     add_args(ap)
     a = ap.parse_args(argv)
     build(a.data_dir, a.mode, a.cities, a.city_px, a.city_window_km, a.tile_px, a.tile_stride,
-          a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m)
+          a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m, a.activity)
 
 
 if __name__ == "__main__":

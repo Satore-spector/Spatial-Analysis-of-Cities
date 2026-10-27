@@ -57,6 +57,12 @@ def train(data_dir, mode, epochs=None, latent=16, batch=64, lr=1e-3, val_share=0
     order = rng.permutation(n)
     n_val = int(round(n * val_share)) if n >= 20 else 0
     val_idx, tr_idx = order[:n_val], order[n_val:]
+    if len(tr_idx) < 2:
+        raise SystemExit(f"Only {len(tr_idx)} training sample(s); need at least 2. "
+                         "Add cities, or lower --tile-px / --min-inside so more tiles are kept.")
+    if not np.isfinite(x_np).all():
+        raise SystemExit(f"{out / 'samples.npz'} contains NaN or infinite values; "
+                         "check the grids from step 2 and rerun step 3.")
     x = torch.from_numpy(x_np)
     model = ConvAutoencoder(x.shape[1], x.shape[2], latent=latent).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
@@ -100,6 +106,9 @@ def train(data_dir, mode, epochs=None, latent=16, batch=64, lr=1e-3, val_share=0
         if since_best >= patience:
             say(f"  stopped at epoch {ep}: no improvement for {patience} epochs")
             break
+    if best_state is None:
+        raise SystemExit("The training error became NaN or infinite, so no model was kept. "
+                         "Try a lower --lr (for example 1e-4).")
     model.load_state_dict(best_state)
     model.eval()
     say(f"  best check error {best:.5f} ({time.time() - t0:.0f} s)")

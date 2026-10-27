@@ -97,7 +97,7 @@ def main(argv=None):
         if not a.skip_train:
             if not step(f"Step 3: samples ({mode})", lambda: samples.build(
                     a.data_dir, mode, a.cities, a.city_px, a.city_window_km, a.tile_px, a.tile_stride,
-                    a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m)):
+                    a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m, a.activity)):
                 continue
             if not step(f"Step 3: train ({mode})", lambda: train.train(
                     a.data_dir, mode, a.epochs, a.latent, a.batch, a.lr, patience=a.patience,

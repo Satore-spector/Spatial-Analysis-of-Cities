@@ -1,0 +1,1350 @@
+diff --git a/README.md b/README.md
+index 4eee319..62b6311 100644
+--- a/README.md
++++ b/README.md
+@@ -7,12 +7,12 @@ This README explains the plan, what exists today, and where help is needed.
+ ## The idea in one paragraph
+ 
+ We download open map data for many cities, turn each city into a set of image-like grids (where the shops, offices, buildings and roads are), and train a neural network **without labels** to learn what makes cities look similar or different. We then cluster what it learned and check whether the groups match known ideas like monocentric and polycentric. The first goal is not a final answer. It is to narrow down broad trends so we know where to look closer.
+-https://download.geofabrik.de/asia/india.html
++
+ ## Status
+ 
+ | Step | State |
+ |---|---|
+-| 1. Download city data (OpenStreetMap + GHSL built-up) | Working; run for Bengaluru, more South Indian cities in progress |
++| 1. Download city data (OpenStreetMap + GHSL built-up) | OSM extraction works (run for Bengaluru). The GHSL pull is built but still being tested on real data |
+ | 2. Consistent city boundaries | Partly done (see below) |
+ | 3. Turn cities into grids | Built (`analysis/rasterize.py`); tested on fake cities, run on Bengaluru |
+ | 4. Unsupervised neural network | Built (`analysis/train.py`); tested on fake cities, run on Bengaluru (tile mode) |
+@@ -25,7 +25,7 @@ Steps 3-5 are tested on fake cities with a known answer (`python run_analysis.py
+ OSM extraction (October 2026): 54,186 POIs (40,855 mapped as points, 13,331 as shapes), 736,627 buildings, 108,713 road lines, boundary from the place-name search.
+ 
+ - **Classical tests disagree.** The Giuliano-Small style test finds one subcentre, south of the main centre. The McMillen style test finds none. So Bengaluru comes out as "unclear". Activity is spread across the city with many medium-busy patches, so nothing stands out sharply enough for the stricter McMillen test. These tests count POIs (shops, amenities), which likely under-count job hubs such as tech parks; rerunning with `--measure poi_offices` is the next check.
+-- **The network's 8 patch types form rings.** A commercial core (dense in retail, finance and food) sits in the middle, surrounded by a dense residential ring, then mixed suburbs, then outer residential and the city edge. This looks like a strongly monocentric layout.
++- **The network's 8 patch types form rings.** A commercial core (dense in retail, finance and food) sits in the middle, surrounded by a dense residential ring, then mixed suburbs, then outer residential and the city edge. Rings like this are expected in any city, polycentric ones included, because activity falls off with distance from the main centre, so they do not by themselves show that Bengaluru is monocentric. The classical tests above disagree, so for now Bengaluru is "unclear".
+ - **One exception: an office-and-leisure patch type on the east side,** away from the core. This may be a second, office-type centre that the POI-based classical tests miss. Where exactly it is still needs checking on a map (`data/rasters/bengaluru.tif` in QGIS).
+ 
+ With one city these are descriptions of Bengaluru, not comparisons: a patch type means "this kind of area within Bengaluru". Running several cities together makes the types shared and comparable.
+@@ -85,7 +85,7 @@ What you get in `data/` for each city (`<slug>` is the lower-case city name):
+ 
+ - `<slug>_boundary.gpkg`, `<slug>_pois.gpkg`, `<slug>_buildings.gpkg`, `<slug>_roads.gpkg`
+ - `extraction_summary.csv`, one row per city with status, counts, boundary source and area in km²
+-- `osm_pbf/`, cached OpenStreetMap downloads so we do not download the same region twice
++- `osm_pbf/`, cached OpenStreetMap downloads so we do not download the same region twice (regional extracts come from Geofabrik, e.g. https://download.geofabrik.de/asia/india.html)
+ 
+ Output files are large and are not committed to git. Everyone generates them locally.
+ 
+diff --git a/add-pipeline-runner.patch b/add-pipeline-runner.patch
+deleted file mode 100644
+index 4ba2cea..0000000
+--- a/add-pipeline-runner.patch
++++ /dev/null
+@@ -1,374 +0,0 @@
+-diff --git a/data_extraction/ghsl_builtup_capitals.R b/data_extraction/ghsl_builtup_capitals.R
+-index 38356cf..d17f13c 100644
+---- a/data_extraction/ghsl_builtup_capitals.R
+-+++ b/data_extraction/ghsl_builtup_capitals.R
+-@@ -27,6 +27,9 @@
+- #   --force             rebuild outputs that already exist (downloaded tiles are reused;
+- #                       delete data/ghsl/tiles/<slug>/ to download them again)
+- #   --tile-deg=0.1      size of each download tile in degrees (smaller = more requests)
+-+#   --summary=NAME.csv  name of the summary file in data/ghsl/ (default
+-+#                       ghsl_capitals_summary.csv); use another name for test runs
+-+#                       so they do not overwrite real results
+- #
+- # Output, in data/ghsl/:
+- #   <slug>_ghs_built_s_2018_10m.tif   built-up surface (m2 per 10 m cell, 0-100),
+-@@ -292,7 +295,11 @@ main <- function() {
+-       message("Running OSM extraction for: ", paste(missing, collapse = "; "))
+-       old_wd <- setwd(root)
+-       on.exit(setwd(old_wd), add = TRUE)
+--      system2(file.path(R.home("bin"), "Rscript"),
+-+      rscript <- file.path(R.home("bin"), "Rscript")
+-+      if (!file.exists(rscript) && !file.exists(paste0(rscript, ".exe"))) {
+-+        rscript <- if (nzchar(Sys.which("Rscript"))) Sys.which("Rscript") else "Rscript"
+-+      }
+-+      system2(rscript,
+-               c(shQuote(file.path("data_extraction", "data_extraction_osm.R")),
+-                 shQuote(missing)))
+-     }
+-@@ -316,7 +323,8 @@ main <- function() {
+-   })
+-   summary_tbl <- do.call(rbind, rows)
+-   print(summary_tbl[, setdiff(names(summary_tbl), c("file", "message"))])
+--  utils::write.csv(summary_tbl, file.path(opts$ghsl_dir, "ghsl_capitals_summary.csv"),
+-+  utils::write.csv(summary_tbl,
+-+                   file.path(opts$ghsl_dir, opt("summary", "ghsl_capitals_summary.csv")),
+-                    row.names = FALSE)
+-   invisible(summary_tbl)
+- }
+-diff --git a/run_pipeline.R b/run_pipeline.R
+-new file mode 100644
+-index 0000000..0dbba5e
+---- /dev/null
+-+++ b/run_pipeline.R
+-@@ -0,0 +1,257 @@
+-+# Run the whole data pipeline in order, or test it one stage at a time.
+-+#
+-+# Pipeline order:
+-+#   1. OSM extraction      data_extraction/data_extraction_osm.R
+-+#   2. POI category plots  data_extraction/amenitiy_wrap.r        (per city)
+-+#   3. GHSL built-up       data_extraction/ghsl_builtup_capitals.R
+-+#
+-+# HOW TO TEST (cheapest first; run from the project root):
+-+#   Rscript run_pipeline.R --check
+-+#       Checks that packages, Python and settings are in place. No network.
+-+#   Rscript run_pipeline.R --test
+-+#       Offline test of the GHSL cutting/maths on fake data. No login needed.
+-+#   Rscript run_pipeline.R --smoke-ghsl --project=MY_GCP_PROJECT
+-+#       One tiny real Earth Engine download (a 1.5 km circle in central Bengaluru)
+-+#       to prove login, project and download work. About a minute.
+-+#   Rscript run_pipeline.R --project=MY_GCP_PROJECT "Bengaluru, India"
+-+#       The full pipeline for one real city.
+-+#   Rscript run_pipeline.R --project=MY_GCP_PROJECT
+-+#       The full pipeline for the five southern capitals.
+-+#
+-+# Options:
+-+#   --project=ID    Google Cloud project for Earth Engine (or set env var EE_PROJECT)
+-+#   --skip-osm      skip step 1 (use files already in data/)
+-+#   --skip-plots    skip step 2
+-+#   --skip-ghsl     skip step 3
+-+#   --force         redo outputs that already exist (steps 1 and 3)
+-+#   --strict        step 1: stop if a boundary falls back to a bounding box
+-+#   --tile-deg=0.1  step 3: size of download tiles in degrees
+-+# City names ("Pune, India") can be listed after the options. With none, the
+-+# southern capitals from ghsl_builtup_capitals.R are used.
+-+#
+-+# Cities that fail in step 1 are dropped from the later steps, and the run
+-+# ends with a table of what happened. Exit status is 1 if any step failed.
+-+
+-+# Path to Rscript: next to R itself if it is there, otherwise whatever is on the PATH.
+-+find_rscript <- function() {
+-+  p <- file.path(R.home("bin"), "Rscript")
+-+  if (file.exists(p) || file.exists(paste0(p, ".exe"))) return(p)
+-+  w <- Sys.which("Rscript")
+-+  if (nzchar(w)) w else "Rscript"
+-+}
+-+rscript <- find_rscript()
+-+quote_all <- function(x) vapply(x, shQuote, character(1), USE.NAMES = FALSE)
+-+
+-+# Run one R script as a separate process; returns its exit status.
+-+run_step <- function(label, script, args = character()) {
+-+  message("\n", strrep("#", 70), "\n# ", label, "\n", strrep("#", 70))
+-+  status <- suppressWarnings(
+-+    system2(rscript, c(shQuote(script), quote_all(args)))
+-+  )
+-+  as.integer(status)
+-+}
+-+
+-+# What is installed? Returns a data frame: check, ok, fix.
+-+preflight <- function(root, need_osm, need_plots, need_ghsl, project) {
+-+  rows <- list()
+-+  add <- function(check, ok, fix = "") {
+-+    rows[[length(rows) + 1]] <<- data.frame(check = check, ok = isTRUE(ok), fix = fix,
+-+                                            stringsAsFactors = FALSE)
+-+  }
+-+  has_pkg <- function(p) requireNamespace(p, quietly = TRUE)
+-+
+-+  scripts <- c(
+-+    if (need_osm) "data_extraction/data_extraction_osm.R",
+-+    if (need_plots) "data_extraction/amenitiy_wrap.r",
+-+    if (need_ghsl) "data_extraction/ghsl_builtup_capitals.R"
+-+  )
+-+  for (s in scripts) add(paste("file", s), file.exists(file.path(root, s)),
+-+                         "run from the project root, and apply the patches")
+-+
+-+  pkgs <- unique(c(
+-+    if (need_osm) c("osmextract", "osmdata", "sf", "dplyr"),
+-+    if (need_plots) c("sf", "dplyr", "ggplot2"),
+-+    if (need_ghsl) c("sf", "terra", "reticulate")
+-+  ))
+-+  for (p in pkgs) add(paste("R package", p), has_pkg(p),
+-+                      paste0("install.packages(\"", p, "\")"))
+-+
+-+  if (need_ghsl) {
+-+    add("Earth Engine project set", nzchar(project),
+-+        "pass --project=<id> or set the EE_PROJECT environment variable")
+-+    if (has_pkg("reticulate")) {
+-+      add("Python package earthengine-api",
+-+          tryCatch(reticulate::py_module_available("ee"), error = function(e) FALSE),
+-+          "reticulate::py_install(\"earthengine-api\")")
+-+    }
+-+  }
+-+  do.call(rbind, rows)
+-+}
+-+
+-+print_preflight <- function(pf) {
+-+  for (i in seq_len(nrow(pf))) {
+-+    message(if (pf$ok[i]) "  [ok]      " else "  [MISSING] ", pf$check[i],
+-+            if (!pf$ok[i] && nzchar(pf$fix[i])) paste0("   -> ", pf$fix[i]) else "")
+-+  }
+-+  invisible(all(pf$ok))
+-+}
+-+
+-+# Tiny real Earth Engine job: a 1.5 km circle in central Bengaluru. Needs no OSM.
+-+smoke_ghsl <- function(root, project, ghsl_script) {
+-+  data_dir <- file.path(root, "data")
+-+  dir.create(data_dir, recursive = TRUE, showWarnings = FALSE)
+-+  centre <- sf::st_sfc(sf::st_point(c(77.5946, 12.9716)), crs = 4326)
+-+  circle <- sf::st_transform(sf::st_buffer(sf::st_transform(centre, 6933), 1500), 4326)
+-+  sf::st_write(sf::st_sf(geometry = sf::st_cast(circle, "MULTIPOLYGON")),
+-+               file.path(data_dir, "smoketest_boundary.gpkg"),
+-+               delete_dsn = TRUE, quiet = TRUE)
+-+
+-+  status <- run_step("Smoke test: GHSL download for a 1.5 km circle", ghsl_script,
+-+                     c("Smoketest, India", paste0("--project=", project), "--force",
+-+                       "--summary=ghsl_smoketest_summary.csv"))
+-+  csv <- file.path(data_dir, "ghsl", "ghsl_smoketest_summary.csv")
+-+  res <- if (file.exists(csv)) utils::read.csv(csv) else NULL
+-+  pass <- identical(status, 0L) && !is.null(res) && nrow(res) == 1 &&
+-+    identical(res$status[1], "ok") && isTRUE(res$built_up_km2[1] > 0.5)
+-+  if (pass) {
+-+    message("\nSMOKE TEST PASSED: ", res$built_up_km2[1], " km2 built-up in ",
+-+            res$raster_area_km2[1], " km2 (expected area is about 7 km2).")
+-+  } else {
+-+    message("\nSMOKE TEST FAILED. See the messages above",
+-+            if (!is.null(res)) paste0(" (summary says: ", res$status[1], " ", res$message[1], ")"),
+-+            ".")
+-+  }
+-+  pass
+-+}
+-+
+-+main <- function() {
+-+  args <- commandArgs(trailingOnly = TRUE)
+-+  flag <- function(name) paste0("--", name) %in% args
+-+  opt <- function(name, default = "") {
+-+    hit <- grep(paste0("^--", name, "="), args, value = TRUE)
+-+    if (length(hit)) sub(paste0("^--", name, "="), "", hit[1]) else default
+-+  }
+-+
+-+  root <- if (requireNamespace("here", quietly = TRUE)) here::here() else getwd()
+-+  if (!file.exists(file.path(root, "data_extraction", "data_extraction_osm.R"))) {
+-+    stop("Run this from the project root (the folder that contains data_extraction/).",
+-+         call. = FALSE)
+-+  }
+-+  setwd(root)
+-+
+-+  osm_script <- file.path("data_extraction", "data_extraction_osm.R")
+-+  plot_script <- file.path("data_extraction", "amenitiy_wrap.r")
+-+  ghsl_script <- file.path("data_extraction", "ghsl_builtup_capitals.R")
+-+  project <- opt("project", Sys.getenv("EE_PROJECT", unset = ""))
+-+
+-+  # ---- Test modes ----
+-+  if (flag("check")) {
+-+    message("Checking setup in ", root)
+-+    pf <- preflight(root, TRUE, TRUE, TRUE, project)
+-+    ok <- print_preflight(pf)
+-+    message(if (ok) "\nEverything needed is in place." else "\nFix the [MISSING] items above.")
+-+    quit(status = if (ok) 0L else 1L)
+-+  }
+-+  if (flag("test")) {
+-+    status <- run_step("Offline test of the GHSL processing (fake data)",
+-+                       file.path("tests", "test_ghsl_offline.R"))
+-+    quit(status = if (identical(status, 0L)) 0L else 1L)
+-+  }
+-+  if (flag("smoke-ghsl")) {
+-+    pf <- preflight(root, FALSE, FALSE, TRUE, project)
+-+    if (!print_preflight(pf)) quit(status = 1L)
+-+    quit(status = if (smoke_ghsl(root, project, ghsl_script)) 0L else 1L)
+-+  }
+-+
+-+  # ---- Full pipeline ----
+-+  skip_osm <- flag("skip-osm"); skip_plots <- flag("skip-plots"); skip_ghsl <- flag("skip-ghsl")
+-+  pf <- preflight(root, !skip_osm, !skip_plots, !skip_ghsl, project)
+-+  if (!print_preflight(pf)) {
+-+    message("\nNothing was run. Fix the [MISSING] items above (or use --skip-... flags).")
+-+    quit(status = 1L)
+-+  }
+-+
+-+  # Reuse the city list and slug rule from the GHSL script (it does not run when sourced).
+-+  env <- new.env()
+-+  sys.source(ghsl_script, envir = env)
+-+  cities <- args[!startsWith(args, "--")]
+-+  if (length(cities) == 0) cities <- env$capitals$city
+-+  slug <- vapply(cities, env$city_slug, character(1), USE.NAMES = FALSE)
+-+  data_dir <- "data"
+-+  message("\nCities: ", paste(cities, collapse = "; "))
+-+
+-+  steps_log <- data.frame(step = character(), status = character(), minutes = numeric(),
+-+                    stringsAsFactors = FALSE)
+-+  record <- function(step, status, t0) {
+-+    steps_log[nrow(steps_log) + 1, ] <<- list(step, status, round(as.numeric(difftime(Sys.time(), t0, units = "mins")), 1))
+-+  }
+-+  finish <- function() {
+-+    message("\n", strrep("=", 70), "\nPIPELINE SUMMARY")
+-+    print(steps_log, row.names = FALSE)
+-+    quit(status = if (any(steps_log$status == "FAILED")) 1L else 0L)
+-+  }
+-+
+-+  # Step 1: OSM extraction
+-+  if (skip_osm) {
+-+    record("1 OSM extraction", "skipped", Sys.time())
+-+  } else {
+-+    t0 <- Sys.time()
+-+    st <- run_step("Step 1: OSM extraction", osm_script,
+-+                   c(cities, if (flag("force")) "--force", if (flag("strict")) "--strict"))
+-+    record("1 OSM extraction", if (identical(st, 0L)) "ok" else "FAILED", t0)
+-+    if (!identical(st, 0L)) { message("Step 1 crashed; stopping."); finish() }
+-+
+-+    # The script handles per-city errors itself, so read its summary.
+-+    sfile <- file.path(data_dir, "extraction_summary.csv")
+-+    if (file.exists(sfile)) {
+-+      s <- utils::read.csv(sfile, stringsAsFactors = FALSE)
+-+      bad <- s[s$status == "error", ]
+-+      for (i in seq_len(nrow(bad))) message("  extraction failed for ", bad$city[i], ": ", bad$message[i])
+-+      if (nrow(bad) > 0) {
+-+        steps_log$status[nrow(steps_log)] <- paste0("ok, ", nrow(bad), " city failed")
+-+      }
+-+    }
+-+  }
+-+
+-+  have_boundary <- file.exists(file.path(data_dir, paste0(slug, "_boundary.gpkg")))
+-+  have_pois <- file.exists(file.path(data_dir, paste0(slug, "_pois.gpkg")))
+-+  if (any(!have_boundary)) {
+-+    message("Dropping from later steps (no boundary file): ",
+-+            paste(cities[!have_boundary], collapse = "; "))
+-+  }
+-+
+-+  # Step 2: POI plots (nice to have: a failure here does not stop step 3)
+-+  if (skip_plots) {
+-+    record("2 POI plots", "skipped", Sys.time())
+-+  } else {
+-+    t0 <- Sys.time()
+-+    sts <- vapply(slug[have_pois], function(s) run_step(paste("Step 2: POI plots for", s), plot_script, s),
+-+                  integer(1))
+-+    record("2 POI plots", if (length(sts) && any(sts != 0L)) "FAILED" else "ok", t0)
+-+  }
+-+
+-+  # Step 3: GHSL built-up surface
+-+  if (skip_ghsl) {
+-+    record("3 GHSL built-up", "skipped", Sys.time())
+-+  } else if (!any(have_boundary)) {
+-+    message("No city has a boundary file, so step 3 cannot run.")
+-+    record("3 GHSL built-up", "FAILED", Sys.time())
+-+  } else {
+-+    t0 <- Sys.time()
+-+    st <- run_step("Step 3: GHSL built-up surface", ghsl_script,
+-+                   c(cities[have_boundary], paste0("--project=", project),
+-+                     if (flag("force")) "--force",
+-+                     if (nzchar(opt("tile-deg"))) paste0("--tile-deg=", opt("tile-deg"))))
+-+    record("3 GHSL built-up", if (identical(st, 0L)) "ok" else "FAILED", t0)
+-+    gfile <- file.path(data_dir, "ghsl", "ghsl_capitals_summary.csv")
+-+    if (file.exists(gfile)) {
+-+      message("\nGHSL results (", gfile, "):")
+-+      g <- utils::read.csv(gfile, stringsAsFactors = FALSE)
+-+      print(g[, intersect(c("city", "status", "boundary_area_km2", "built_up_km2", "built_up_share"),
+-+                          names(g))], row.names = FALSE)
+-+    }
+-+  }
+-+  finish()
+-+}
+-+
+-+if (sys.nframe() == 0L) main()
+-diff --git a/tests/test_ghsl_offline.R b/tests/test_ghsl_offline.R
+-new file mode 100644
+-index 0000000..8526fd8
+---- /dev/null
+-+++ b/tests/test_ghsl_offline.R
+-@@ -0,0 +1,68 @@
+-+# Offline test of the GHSL processing in data_extraction/ghsl_builtup_capitals.R.
+-+# Needs only the sf and terra packages: no Earth Engine login, no downloads.
+-+#
+-+# Run from the project root:   Rscript tests/test_ghsl_offline.R
+-+#                         or:   Rscript run_pipeline.R --test
+-+#
+-+# It builds fake 10 m tiles in the same Mollweide projection as the real data
+-+# (every cell = 50 m2 of 100 m2, so the built-up share must come out as 0.5),
+-+# cuts them to a made-up circular city boundary, and checks the area and share.
+-+# It checks the tiling, merging, masking and sums, not the Earth Engine download.
+-+
+-+suppressMessages({library(sf); library(terra)})
+-+sf_use_s2(FALSE)
+-+
+-+root <- if (requireNamespace("here", quietly = TRUE)) here::here() else getwd()
+-+script <- file.path(root, "data_extraction", "ghsl_builtup_capitals.R")
+-+if (!file.exists(script)) stop("Run from the project root; cannot find ", script, call. = FALSE)
+-+source(script) # only defines functions; main() does not run when sourced
+-+
+-+check <- function(name, ok) {
+-+  cat(sprintf("  %-55s %s\n", name, if (ok) "ok" else "FAILED"))
+-+  if (!ok) stop("Test failed: ", name, call. = FALSE)
+-+}
+-+
+-+cat("City names and tile grid\n")
+-+check("slug: Thiruvananthapuram", city_slug("Thiruvananthapuram, India") == "thiruvananthapuram")
+-+check("slug: Bengaluru", city_slug("Bengaluru, India") == "bengaluru")
+-+g <- tile_grid(77.45, 12.83, 77.78, 13.14, 0.1)
+-+check("tiles cover the whole bounding box",
+-+      min(g$xmin) <= 77.45 && max(g$xmax) >= 77.78 && min(g$ymin) <= 12.83 && max(g$ymax) >= 13.14)
+-+check("a box exactly on one tile gives one tile", nrow(tile_grid(77.0, 12.0, 77.1, 12.1, 0.1)) == 1)
+-+
+-+cat("Mosaic, mask and sums on fake Mollweide tiles\n")
+-+centre <- st_sfc(st_point(c(77.59, 12.97)), crs = 4326)
+-+boundary <- st_sf(geometry = st_transform(st_buffer(st_transform(centre, 6933), 10000), 4326))
+-+true_km2 <- as.numeric(st_area(st_transform(boundary, 6933))) / 1e6
+-+
+-+moll <- "ESRI:54009"
+-+bb <- st_bbox(st_transform(boundary, moll))
+-+x0 <- floor(bb[["xmin"]] / 10) * 10 - 2000
+-+y1 <- ceiling(bb[["ymax"]] / 10) * 10 + 2000
+-+half <- 12000
+-+make_tile <- function(xo, yo) {
+-+  r <- rast(xmin = x0 + xo, xmax = x0 + xo + half, ymax = y1 - yo, ymin = y1 - yo - half,
+-+            resolution = 10, crs = moll)
+-+  values(r) <- 50
+-+  f <- tempfile(fileext = ".tif"); writeRaster(r, f); f
+-+}
+-+files <- c(make_tile(0, 0), make_tile(half, 0), make_tile(0, half), make_tile(half, half))
+-+
+-+res <- mosaic_and_cut(files, boundary)
+-+cat(sprintf("  true area %.1f km2, raster area %.1f km2, built-up %.1f km2, share %.3f\n",
+-+            true_km2, res$raster_area_km2, res$built_up_km2, res$built_up_share))
+-+check("raster area within 2% of boundary area",
+-+      abs(res$raster_area_km2 - true_km2) / true_km2 < 0.02)
+-+check("built-up share is 0.5", abs(res$built_up_share - 0.5) < 1e-6)
+-+check("output stays in 10 m Mollweide", all(res(res$raster) == 10) &&
+-+        grepl("Mollweide", crs(res$raster, describe = TRUE)$name))
+-+
+-+out <- tempfile(fileext = ".tif")
+-+writeRaster(res$raster, out, overwrite = TRUE, gdal = c("COMPRESS=DEFLATE"))
+-+check("compressed GeoTIFF writes and reads back", all(res(rast(out)) == 10))
+-+
+-+one <- mosaic_and_cut(files[1], st_sf(geometry = st_transform(
+-+  st_buffer(st_transform(st_sfc(st_point(c(77.54, 13.02)), crs = 4326), 6933), 3000), 4326)))
+-+check("single-tile case works", one$built_up_km2 > 0)
+-+
+-+cat("ALL TESTS PASSED\n")
+diff --git a/analysis/samples.py b/analysis/samples.py
+index 5a2a667..f396876 100644
+--- a/analysis/samples.py
++++ b/analysis/samples.py
+@@ -101,14 +101,17 @@ def city_samples(grids, channels, city_px, window_km):
+     return xs, rows
+ 
+ 
+-def tile_samples(grids, channels, tile_px, stride, min_inside, min_activity):
++def tile_samples(grids, channels, tile_px, stride, min_inside, min_activity, activity_layers="all"):
+     xs, rows = [], []
+     for slug, (grid, mask, meta) in grids.items():
+         cell = meta["cell_m"]
+         cr, cc = meta["centre_rc"]
+         idx = [meta["channels"].index(c) for c in channels]
+         sub = grid[idx]
+-        activity = grid.sum(0)
++        if activity_layers == "poi":   # POI counts only, so --min-activity means "POIs per tile"
++            activity = grid[[i for i, c in enumerate(meta["channels"]) if c.startswith("poi_")]].sum(0)
++        else:                          # every layer; mixes counts, shares and road metres
++            activity = grid.sum(0)
+         n0 = len(rows)
+         for r0 in range(0, grid.shape[1] - tile_px + 1, stride):
+             for c0 in range(0, grid.shape[2] - tile_px + 1, stride):
+@@ -168,7 +171,7 @@ def smooth(grid, mask, meta, smooth_m):
+ 
+ def build(data_dir, mode, cities=None, city_px=64, city_window_km=40, tile_px=32,
+           tile_stride=None, min_inside=0.5, min_activity=1.0, how="city-share", channels="auto",
+-          smooth_m=200.0):
++          smooth_m=200.0, activity_layers="all"):
+     data_dir = Path(data_dir)
+     slugs = [s for s in find_cities(data_dir, cities) if (raster_dir(data_dir) / f"{s}.npz").exists()]
+     if not slugs:
+@@ -187,7 +190,8 @@ def build(data_dir, mode, cities=None, city_px=64, city_window_km=40, tile_px=32
+     if mode == "city":
+         xs, rows = city_samples(grids, chosen, city_px, city_window_km)
+     else:
+-        xs, rows = tile_samples(grids, chosen, tile_px, tile_stride or tile_px, min_inside, min_activity)
++        xs, rows = tile_samples(grids, chosen, tile_px, tile_stride or tile_px, min_inside, min_activity,
++                                activity_layers)
+     if not xs:
+         raise SystemExit("No samples were made; try a lower --min-inside or --min-activity.")
+     x, scale = normalise(xs, rows, grids, chosen, how)
+@@ -220,6 +224,9 @@ def add_args(ap):
+                     help="tile mode: keep tiles at least this share inside the boundary")
+     ap.add_argument("--min-activity", type=float, default=1.0,
+                     help="tile mode: skip tiles with (almost) nothing in them")
++    ap.add_argument("--activity", choices=["all", "poi"], default="all",
++                    help="tile mode: what --min-activity counts. 'all' sums every layer (counts, "
++                         "shares and road metres mixed); 'poi' counts POIs only")
+     ap.add_argument("--smooth-m", type=float, default=200,
+                     help="blur layers by this many metres before cutting (0 = off)")
+     ap.add_argument("--normalise", choices=["city-share", "absolute"], default="city-share")
+@@ -235,7 +242,7 @@ def main(argv=None):
+     add_args(ap)
+     a = ap.parse_args(argv)
+     build(a.data_dir, a.mode, a.cities, a.city_px, a.city_window_km, a.tile_px, a.tile_stride,
+-          a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m)
++          a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m, a.activity)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/analysis/train.py b/analysis/train.py
+index d3469dc..34f3db8 100644
+--- a/analysis/train.py
++++ b/analysis/train.py
+@@ -57,6 +57,12 @@ def train(data_dir, mode, epochs=None, latent=16, batch=64, lr=1e-3, val_share=0
+     order = rng.permutation(n)
+     n_val = int(round(n * val_share)) if n >= 20 else 0
+     val_idx, tr_idx = order[:n_val], order[n_val:]
++    if len(tr_idx) < 2:
++        raise SystemExit(f"Only {len(tr_idx)} training sample(s); need at least 2. "
++                         "Add cities, or lower --tile-px / --min-inside so more tiles are kept.")
++    if not np.isfinite(x_np).all():
++        raise SystemExit(f"{out / 'samples.npz'} contains NaN or infinite values; "
++                         "check the grids from step 2 and rerun step 3.")
+     x = torch.from_numpy(x_np)
+     model = ConvAutoencoder(x.shape[1], x.shape[2], latent=latent).to(dev)
+     opt = torch.optim.Adam(model.parameters(), lr=lr)
+@@ -100,6 +106,9 @@ def train(data_dir, mode, epochs=None, latent=16, batch=64, lr=1e-3, val_share=0
+         if since_best >= patience:
+             say(f"  stopped at epoch {ep}: no improvement for {patience} epochs")
+             break
++    if best_state is None:
++        raise SystemExit("The training error became NaN or infinite, so no model was kept. "
++                         "Try a lower --lr (for example 1e-4).")
+     model.load_state_dict(best_state)
+     model.eval()
+     say(f"  best check error {best:.5f} ({time.time() - t0:.0f} s)")
+diff --git a/earth.patch b/earth.patch
+deleted file mode 100644
+index 36bfae8..0000000
+--- a/earth.patch
++++ /dev/null
+@@ -1,70 +0,0 @@
+-diff --git a/data_extraction/ghsl_builtup_capitals.R b/data_extraction/ghsl_builtup_capitals.R
+-index d17f13c..733ac07 100644
+---- a/data_extraction/ghsl_builtup_capitals.R
+-+++ b/data_extraction/ghsl_builtup_capitals.R
+-@@ -11,7 +11,9 @@
+- #
+- # Setup (once):
+- #   install.packages(c("reticulate", "sf", "terra"))
+--#   reticulate::py_install("earthengine-api")
+-+#   The Python package earthengine-api is installed automatically by a recent
+-+#   reticulate. (With an old reticulate, install Python 3.12 and run
+-+#   reticulate::py_install("earthengine-api").)
+- #   You also need a Google Cloud project with the Earth Engine API enabled and
+- #   registered for Earth Engine use (https://code.earthengine.google.com/register).
+- #   The first run opens a browser to log in.
+-@@ -95,15 +97,22 @@ summary_row <- function(city, state, status, tiles = NA_integer_,
+- # ---- Earth Engine -----------------------------------------------------------
+- 
+- init_ee <- function(project) {
+--  if (!nzchar(project)) {
+--    stop("Pass your Google Cloud project: --project=<id> (or set EE_PROJECT).",
+-+  if (!nzchar(project) || grepl("YOUR", toupper(project), fixed = TRUE)) {
+-+    stop("Pass your real Google Cloud project ID: --project=<id> (or set EE_PROJECT).",
+-          call. = FALSE)
+-   }
+-+  # Newer reticulate installs Python packages on demand; this has to be declared
+-+  # before Python starts. Older reticulate lacks it and needs py_install instead.
+-+  if ("py_require" %in% getNamespaceExports("reticulate")) {
+-+    tryCatch(reticulate::py_require("earthengine-api"), error = function(e) NULL)
+-+  }
+-   ee <- tryCatch(
+-     reticulate::import("ee"),
+-     error = function(e) {
+--      stop("Python package 'earthengine-api' not found. Run: ",
+--           "reticulate::py_install(\"earthengine-api\")", call. = FALSE)
+-+      stop("Python package 'earthengine-api' not found (", conditionMessage(e), "). ",
+-+           "Update reticulate so it can install it automatically, or install ",
+-+           "Python 3.12 and run reticulate::py_install(\"earthengine-api\").",
+-+           call. = FALSE)
+-     }
+-   )
+-   ok <- tryCatch({ ee$Initialize(project = project); TRUE }, error = function(e) FALSE)
+-diff --git a/run_pipeline.R b/run_pipeline.R
+-index 0dbba5e..3708bfc 100644
+---- a/run_pipeline.R
+-+++ b/run_pipeline.R
+-@@ -77,12 +77,20 @@ preflight <- function(root, need_osm, need_plots, need_ghsl, project) {
+-                       paste0("install.packages(\"", p, "\")"))
+- 
+-   if (need_ghsl) {
+--    add("Earth Engine project set", nzchar(project),
+--        "pass --project=<id> or set the EE_PROJECT environment variable")
+-+    add("Earth Engine project set",
+-+        nzchar(project) && !grepl("YOUR", toupper(project), fixed = TRUE),
+-+        "pass your real Google Cloud project ID: --project=<id> (or set EE_PROJECT)")
+-     if (has_pkg("reticulate")) {
+-+      # Newer reticulate installs Python packages on demand. This must run
+-+      # before Python starts, so it comes before the check below.
+-+      if ("py_require" %in% getNamespaceExports("reticulate")) {
+-+        tryCatch(reticulate::py_require("earthengine-api"), error = function(e) NULL)
+-+      }
+-       add("Python package earthengine-api",
+-           tryCatch(reticulate::py_module_available("ee"), error = function(e) FALSE),
+--          "reticulate::py_install(\"earthengine-api\")")
+-+          paste0("update reticulate (install.packages(\"reticulate\")) so it can install ",
+-+                 "Python packages itself, or install Python 3.12 and run ",
+-+                 "reticulate::py_install(\"earthengine-api\")"))
+-     }
+-   }
+-   do.call(rbind, rows)
+diff --git a/fixghs.patch b/fixghs.patch
+deleted file mode 100644
+index 4e6aa2a..0000000
+--- a/fixghs.patch
++++ /dev/null
+@@ -1,25 +0,0 @@
+-diff --git a/data_extraction/ghsl_builtup_capitals.R b/data_extraction/ghsl_builtup_capitals.R
+-index 733ac07..275a6ff 100644
+---- a/data_extraction/ghsl_builtup_capitals.R
+-+++ b/data_extraction/ghsl_builtup_capitals.R
+-@@ -316,10 +316,17 @@ main <- function() {
+- 
+-   ee <- init_ee(opt("project", Sys.getenv("EE_PROJECT", unset = "")))
+-   img <- ee$Image(ghsl_asset)$select(ghsl_band)
+--  crs <- img$projection()$getInfo()$crs
+--  if (is.null(crs)) stop("Could not read the projection of ", ghsl_asset, call. = FALSE)
+-+  # Earth Engine reports a standard projection under `crs` (e.g. "EPSG:4326") but
+-+  # a custom one such as GHSL's Mollweide as WKT text under `wkt`. Either can be
+-+  # passed back to getDownloadURL as `crs`.
+-+  pinfo <- img$projection()$getInfo()
+-+  crs <- if (!is.null(pinfo$crs)) pinfo$crs else pinfo$wkt
+-+  if (is.null(crs) || !nzchar(crs)) {
+-+    stop("Could not read the projection of ", ghsl_asset, ". Earth Engine returned ",
+-+         "these fields: ", paste(names(pinfo), collapse = ", "), call. = FALSE)
+-+  }
+-   message("Asset ", ghsl_asset, ", band ", ghsl_band, ", native CRS: ",
+--          substr(crs, 1, 60))
+-+          gsub("\\s+", " ", substr(crs, 1, 70)))
+- 
+-   rows <- lapply(seq_len(nrow(todo)), function(i) {
+-     tryCatch(
+diff --git a/ghs.patch b/ghs.patch
+deleted file mode 100644
+index ab87187..0000000
+--- a/ghs.patch
++++ /dev/null
+@@ -1,331 +0,0 @@
+-diff --git a/data_extraction/ghsl_builtup_capitals.R b/data_extraction/ghsl_builtup_capitals.R
+-new file mode 100644
+-index 0000000..38356cf
+---- /dev/null
+-+++ b/data_extraction/ghsl_builtup_capitals.R
+-@@ -0,0 +1,325 @@
+-+# Pull GHSL built-up surface (GHS-BUILT-S, 10 m, 2018) from Google Earth Engine
+-+# and cut out the capital city of each southern Indian state, using the city
+-+# boundaries that data_extraction_osm.R already wrote to data/<slug>_boundary.gpkg.
+-+#
+-+# Why 10 m / 2018: in GHSL release P2023A the 10 m built-up surface only exists
+-+# for 2018 (100 m and 1 km go 1975-2030). 10 m is the finest resolution offered.
+-+#
+-+# Why only the cities and not whole states: a state at 10 m is billions of
+-+# pixels (Karnataka alone is ~1.9 billion). Only the area inside each city
+-+# boundary is downloaded.
+-+#
+-+# Setup (once):
+-+#   install.packages(c("reticulate", "sf", "terra"))
+-+#   reticulate::py_install("earthengine-api")
+-+#   You also need a Google Cloud project with the Earth Engine API enabled and
+-+#   registered for Earth Engine use (https://code.earthengine.google.com/register).
+-+#   The first run opens a browser to log in.
+-+#
+-+# Usage (from the project root):
+-+#   Rscript data_extraction/ghsl_builtup_capitals.R --project=my-gcp-project
+-+#   Rscript data_extraction/ghsl_builtup_capitals.R --project=my-gcp-project "Pune, India"
+-+#
+-+# Options:
+-+#   --project=ID        Google Cloud project for Earth Engine (or set env var EE_PROJECT)
+-+#   --extract-missing   run data_extraction_osm.R first for cities with no boundary file
+-+#                       (note: that downloads POIs, buildings and roads too)
+-+#   --force             rebuild outputs that already exist (downloaded tiles are reused;
+-+#                       delete data/ghsl/tiles/<slug>/ to download them again)
+-+#   --tile-deg=0.1      size of each download tile in degrees (smaller = more requests)
+-+#
+-+# Output, in data/ghsl/:
+-+#   <slug>_ghs_built_s_2018_10m.tif   built-up surface (m2 per 10 m cell, 0-100),
+-+#                                     cut to the city boundary, in the native
+-+#                                     equal-area Mollweide projection
+-+#   ghsl_capitals_summary.csv         one row per city, including sanity checks
+-+#
+-+# Data: GHSL, European Commission JRC, licensed CC BY 4.0 (credit the source).
+-+
+-+# ---- Configuration ----------------------------------------------------------
+-+
+-+ghsl_year <- 2018
+-+ghsl_asset <- paste0("JRC/GHSL/P2023A/GHS_BUILT_S_10m/", ghsl_year)
+-+ghsl_band <- "built_surface"
+-+cell_size_m <- 10
+-+
+-+# Capitals of the southern states. Names must match what data_extraction_osm.R
+-+# was run with, because the boundary file is found from the city name.
+-+# Notes: Hyderabad was the shared capital of Andhra Pradesh until 2024, and
+-+# Amaravati (AP's new capital) was barely built in 2018, so expect very little
+-+# built-up surface there.
+-+capitals <- data.frame(
+-+  state = c("Karnataka", "Tamil Nadu", "Telangana", "Kerala", "Andhra Pradesh"),
+-+  city = c(
+-+    "Bengaluru, India", "Chennai, India", "Hyderabad, India",
+-+    "Thiruvananthapuram, India", "Amaravati, India"
+-+  ),
+-+  stringsAsFactors = FALSE
+-+)
+-+
+-+# ---- Helpers (no package needed, so they can be tested on their own) --------
+-+
+-+# Must match the slug rule in data_extraction_osm.R.
+-+city_slug <- function(city) {
+-+  gsub("[^a-z]", "", tolower(strsplit(city, ",")[[1]][1]))
+-+}
+-+
+-+# Grid of lon/lat tiles covering a bounding box. Tile edges sit on multiples of
+-+# `step`, so tiles from different cities line up and can be reused.
+-+tile_grid <- function(xmin, ymin, xmax, ymax, step) {
+-+  ix <- seq(floor(xmin / step), max(floor(xmin / step), ceiling(xmax / step) - 1))
+-+  iy <- seq(floor(ymin / step), max(floor(ymin / step), ceiling(ymax / step) - 1))
+-+  g <- expand.grid(ix = ix, iy = iy)
+-+  g$xmin <- g$ix * step
+-+  g$xmax <- (g$ix + 1) * step
+-+  g$ymin <- g$iy * step
+-+  g$ymax <- (g$iy + 1) * step
+-+  g
+-+}
+-+
+-+summary_row <- function(city, state, status, tiles = NA_integer_,
+-+                        boundary_area_km2 = NA_real_, raster_area_km2 = NA_real_,
+-+                        built_up_km2 = NA_real_, built_up_share = NA_real_,
+-+                        file = NA_character_, message = "") {
+-+  data.frame(
+-+    city = city, state = state, status = status, tiles = tiles,
+-+    boundary_area_km2 = boundary_area_km2, raster_area_km2 = raster_area_km2,
+-+    built_up_km2 = built_up_km2, built_up_share = built_up_share,
+-+    file = file, message = message, stringsAsFactors = FALSE
+-+  )
+-+}
+-+
+-+# ---- Earth Engine -----------------------------------------------------------
+-+
+-+init_ee <- function(project) {
+-+  if (!nzchar(project)) {
+-+    stop("Pass your Google Cloud project: --project=<id> (or set EE_PROJECT).",
+-+         call. = FALSE)
+-+  }
+-+  ee <- tryCatch(
+-+    reticulate::import("ee"),
+-+    error = function(e) {
+-+      stop("Python package 'earthengine-api' not found. Run: ",
+-+           "reticulate::py_install(\"earthengine-api\")", call. = FALSE)
+-+    }
+-+  )
+-+  ok <- tryCatch({ ee$Initialize(project = project); TRUE }, error = function(e) FALSE)
+-+  if (!ok) {
+-+    message("Earth Engine login needed; follow the prompts.")
+-+    ee$Authenticate()
+-+    ee$Initialize(project = project)
+-+  }
+-+  ee
+-+}
+-+
+-+# Download one lon/lat tile as a GeoTIFF in the image's native projection.
+-+download_tile <- function(ee, img, crs, xmin, ymin, xmax, ymax, dest, tries = 3) {
+-+  region <- ee$Geometry$Rectangle(c(xmin, ymin, xmax, ymax),
+-+                                  proj = "EPSG:4326", geodesic = FALSE)
+-+  old <- options(timeout = 900)
+-+  on.exit(options(old), add = TRUE)
+-+  last_err <- NULL
+-+  for (i in seq_len(tries)) {
+-+    res <- tryCatch({
+-+      url <- img$getDownloadURL(list(
+-+        region = region, scale = cell_size_m, crs = crs,
+-+        format = "GEO_TIFF"
+-+      ))
+-+      tmp <- tempfile(fileext = ".bin")
+-+      utils::download.file(url, tmp, mode = "wb", quiet = TRUE)
+-+
+-+      # Normally a plain GeoTIFF; unzip in case Earth Engine returns a zip.
+-+      if (identical(readBin(tmp, "raw", 2), as.raw(c(0x50, 0x4b)))) {
+-+        td <- tempfile(); dir.create(td)
+-+        utils::unzip(tmp, exdir = td)
+-+        tif <- list.files(td, pattern = "\\.tif$", full.names = TRUE)[1]
+-+        file.copy(tif, tmp, overwrite = TRUE)
+-+      }
+-+      terra::rast(tmp) # fails here if the download is not a valid raster
+-+      file.copy(tmp, dest, overwrite = TRUE)
+-+      TRUE
+-+    }, error = function(e) { last_err <<- conditionMessage(e); FALSE })
+-+    if (isTRUE(res)) return(invisible(TRUE))
+-+    message("  tile attempt ", i, " failed: ", last_err)
+-+    Sys.sleep(2^i)
+-+  }
+-+  stop("Tile download failed after ", tries, " attempts: ", last_err, call. = FALSE)
+-+}
+-+
+-+# ---- Mosaic, cut to the boundary, summarise (needs sf + terra, no Earth Engine)
+-+
+-+mosaic_and_cut <- function(tile_files, boundary) {
+-+  rs <- lapply(tile_files, terra::rast)
+-+
+-+  # Tiles request the same native grid, so they should line up exactly.
+-+  ref <- terra::ext(rs[[1]])
+-+  off <- vapply(rs, function(r) {
+-+    e <- terra::ext(r)
+-+    max(abs((e$xmin - ref$xmin) / cell_size_m - round((e$xmin - ref$xmin) / cell_size_m)),
+-+        abs((e$ymax - ref$ymax) / cell_size_m - round((e$ymax - ref$ymax) / cell_size_m)))
+-+  }, numeric(1))
+-+  if (any(off > 1e-3)) {
+-+    warning("Tiles are not on one pixel grid; merging will resample some of them.",
+-+            call. = FALSE)
+-+  }
+-+
+-+  r <- if (length(rs) == 1) rs[[1]] else do.call(terra::merge, rs)
+-+  names(r) <- "built_surface_m2"
+-+
+-+  v <- terra::project(terra::vect(boundary), terra::crs(r))
+-+  r <- terra::mask(terra::crop(r, v), v)
+-+
+-+  cell_area <- prod(terra::res(r))
+-+  n_cells <- terra::global(!is.na(r), "sum")[[1]]
+-+  total_m2 <- terra::global(r, "sum", na.rm = TRUE)[[1]]
+-+  list(
+-+    raster = r,
+-+    raster_area_km2 = n_cells * cell_area / 1e6,
+-+    built_up_km2 = total_m2 / 1e6,
+-+    built_up_share = total_m2 / (n_cells * cell_area)
+-+  )
+-+}
+-+
+-+# ---- Per-city ---------------------------------------------------------------
+-+
+-+process_city <- function(ee, img, crs, city, state, opts) {
+-+  slug <- city_slug(city)
+-+  message("\n=== ", city, " (", state, ") ===")
+-+  out_tif <- file.path(opts$ghsl_dir, paste0(slug, "_ghs_built_s_", ghsl_year, "_10m.tif"))
+-+  if (!opts$force && file.exists(out_tif)) {
+-+    message("Output exists, skipping (use --force to rebuild).")
+-+    return(summary_row(city, state, "skipped", file = out_tif))
+-+  }
+-+
+-+  b_file <- file.path(opts$data_dir, paste0(slug, "_boundary.gpkg"))
+-+  if (!file.exists(b_file)) {
+-+    return(summary_row(city, state, "no_boundary", message = paste0(
+-+      "Missing ", b_file, ". Run data_extraction_osm.R for this city first ",
+-+      "(or use --extract-missing).")))
+-+  }
+-+
+-+  boundary <- sf::st_transform(sf::st_read(b_file, quiet = TRUE), 4326)
+-+  area_km2 <- as.numeric(sum(sf::st_area(sf::st_transform(boundary, 6933)))) / 1e6
+-+  message("Boundary area: ", round(area_km2), " km2")
+-+  if (area_km2 > 1500) {
+-+    warning(city, ": boundary is ", round(area_km2), " km2, which is large for a ",
+-+            "city. The OSM search may have returned a district or region instead ",
+-+            "of the city; check data/", slug, "_boundary.gpkg.", call. = FALSE)
+-+  }
+-+
+-+  bb <- sf::st_bbox(boundary)
+-+  grid <- tile_grid(bb[["xmin"]], bb[["ymin"]], bb[["xmax"]], bb[["ymax"]], opts$tile_deg)
+-+  tile_polys <- sf::st_sfc(lapply(seq_len(nrow(grid)), function(i) {
+-+    sf::st_polygon(list(rbind(
+-+      c(grid$xmin[i], grid$ymin[i]), c(grid$xmax[i], grid$ymin[i]),
+-+      c(grid$xmax[i], grid$ymax[i]), c(grid$xmin[i], grid$ymax[i]),
+-+      c(grid$xmin[i], grid$ymin[i])
+-+    )))
+-+  }), crs = 4326)
+-+  grid <- grid[lengths(sf::st_intersects(tile_polys, boundary)) > 0, ]
+-+  message(nrow(grid), " tile(s) to fetch at ", opts$tile_deg, " degrees")
+-+
+-+  tile_dir <- file.path(opts$ghsl_dir, "tiles", slug)
+-+  dir.create(tile_dir, recursive = TRUE, showWarnings = FALSE)
+-+  tile_files <- file.path(tile_dir, sprintf("tile_%d_%d.tif", grid$ix, grid$iy))
+-+  for (i in seq_len(nrow(grid))) {
+-+    if (file.exists(tile_files[i])) next
+-+    message("  downloading tile ", i, "/", nrow(grid))
+-+    download_tile(ee, img, crs, grid$xmin[i], grid$ymin[i], grid$xmax[i], grid$ymax[i],
+-+                  tile_files[i])
+-+  }
+-+
+-+  res <- mosaic_and_cut(tile_files, boundary)
+-+  terra::writeRaster(res$raster, out_tif, overwrite = TRUE,
+-+                     gdal = c("COMPRESS=DEFLATE"))
+-+
+-+  # The Mollweide grid is equal-area, so the number of boundary cells times the
+-+  # cell area should match the boundary area. A big gap means a mask/CRS problem.
+-+  gap <- abs(res$raster_area_km2 - area_km2) / area_km2
+-+  if (gap > 0.1) {
+-+    warning(city, ": raster area (", round(res$raster_area_km2),
+-+            " km2) differs from boundary area (", round(area_km2), " km2) by ",
+-+            round(100 * gap), "%.", call. = FALSE)
+-+  }
+-+  message("Built-up: ", round(res$built_up_km2, 1), " km2 (",
+-+          round(100 * res$built_up_share, 1), "% of the city)")
+-+
+-+  summary_row(city, state, "ok", tiles = nrow(grid),
+-+              boundary_area_km2 = round(area_km2, 1),
+-+              raster_area_km2 = round(res$raster_area_km2, 1),
+-+              built_up_km2 = round(res$built_up_km2, 2),
+-+              built_up_share = round(res$built_up_share, 4), file = out_tif)
+-+}
+-+
+-+# ---- Main -------------------------------------------------------------------
+-+
+-+main <- function() {
+-+  args <- commandArgs(trailingOnly = TRUE)
+-+  opt <- function(name, default) {
+-+    hit <- grep(paste0("^--", name, "="), args, value = TRUE)
+-+    if (length(hit)) sub(paste0("^--", name, "="), "", hit[1]) else default
+-+  }
+-+
+-+  for (p in c("reticulate", "sf", "terra")) {
+-+    if (!requireNamespace(p, quietly = TRUE)) {
+-+      stop("Please install the '", p, "' package.", call. = FALSE)
+-+    }
+-+  }
+-+  old_s2 <- sf::sf_use_s2(FALSE)
+-+  on.exit(sf::sf_use_s2(old_s2), add = TRUE)
+-+
+-+  root <- if (requireNamespace("here", quietly = TRUE)) here::here() else getwd()
+-+  opts <- list(
+-+    data_dir = file.path(root, "data"),
+-+    ghsl_dir = file.path(root, "data", "ghsl"),
+-+    force = "--force" %in% args,
+-+    tile_deg = as.numeric(opt("tile-deg", "0.1"))
+-+  )
+-+  dir.create(opts$ghsl_dir, recursive = TRUE, showWarnings = FALSE)
+-+
+-+  cities_arg <- args[!startsWith(args, "--")]
+-+  todo <- if (length(cities_arg)) {
+-+    data.frame(state = NA_character_, city = cities_arg, stringsAsFactors = FALSE)
+-+  } else {
+-+    capitals
+-+  }
+-+
+-+  # Optionally run the OSM extraction for cities that have no boundary yet.
+-+  if ("--extract-missing" %in% args) {
+-+    missing <- todo$city[!file.exists(file.path(
+-+      opts$data_dir, paste0(vapply(todo$city, city_slug, ""), "_boundary.gpkg")))]
+-+    if (length(missing)) {
+-+      message("Running OSM extraction for: ", paste(missing, collapse = "; "))
+-+      old_wd <- setwd(root)
+-+      on.exit(setwd(old_wd), add = TRUE)
+-+      system2(file.path(R.home("bin"), "Rscript"),
+-+              c(shQuote(file.path("data_extraction", "data_extraction_osm.R")),
+-+                shQuote(missing)))
+-+    }
+-+  }
+-+
+-+  ee <- init_ee(opt("project", Sys.getenv("EE_PROJECT", unset = "")))
+-+  img <- ee$Image(ghsl_asset)$select(ghsl_band)
+-+  crs <- img$projection()$getInfo()$crs
+-+  if (is.null(crs)) stop("Could not read the projection of ", ghsl_asset, call. = FALSE)
+-+  message("Asset ", ghsl_asset, ", band ", ghsl_band, ", native CRS: ",
+-+          substr(crs, 1, 60))
+-+
+-+  rows <- lapply(seq_len(nrow(todo)), function(i) {
+-+    tryCatch(
+-+      process_city(ee, img, crs, todo$city[i], todo$state[i], opts),
+-+      error = function(e) {
+-+        message("FAILED: ", todo$city[i], ": ", conditionMessage(e))
+-+        summary_row(todo$city[i], todo$state[i], "error", message = conditionMessage(e))
+-+      }
+-+    )
+-+  })
+-+  summary_tbl <- do.call(rbind, rows)
+-+  print(summary_tbl[, setdiff(names(summary_tbl), c("file", "message"))])
+-+  utils::write.csv(summary_tbl, file.path(opts$ghsl_dir, "ghsl_capitals_summary.csv"),
+-+                   row.names = FALSE)
+-+  invisible(summary_tbl)
+-+}
+-+
+-+# Run only when executed as a script, not when sourced (e.g. for testing).
+-+if (sys.nframe() == 0L) main()
+diff --git a/improve-data-extraction.patch b/improve-data-extraction.patch
+deleted file mode 100644
+index 2209af5..0000000
+--- a/improve-data-extraction.patch
++++ /dev/null
+@@ -1,381 +0,0 @@
+-diff --git a/data_extraction/amenitiy_wrap.r b/data_extraction/amenitiy_wrap.r
+-index d03eee6..e54e962 100644
+---- a/data_extraction/amenitiy_wrap.r
+-+++ b/data_extraction/amenitiy_wrap.r
+-@@ -2,8 +2,19 @@ library(sf)
+- library(dplyr)
+- library(ggplot2)
+- 
+--b <- st_read("C:\\Spatial-Analysis-of-Cities\\data\\bengaluru_boundary.gpkg", quiet = TRUE)
+--p <- st_read("C:\\Spatial-Analysis-of-Cities\\data\\bengaluru_pois.gpkg", quiet = TRUE)
+-+# Usage (from the project root): Rscript data_extraction/amenitiy_wrap.r [slug]
+-+# slug is the lower-case city name used by data_extraction_osm.R (default: bengaluru)
+-+args <- commandArgs(trailingOnly = TRUE)
+-+slug <- if (length(args) >= 1) args[1] else "bengaluru"
+-+city_title <- tools::toTitleCase(slug)
+-+
+-+root <- if (requireNamespace("here", quietly = TRUE)) here::here() else getwd()
+-+data_dir <- file.path(root, "data")
+-+fig_dir <- file.path(data_dir, "figures")
+-+dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+-+
+-+b <- st_read(file.path(data_dir, paste0(slug, "_boundary.gpkg")), quiet = TRUE)
+-+p <- st_read(file.path(data_dir, paste0(slug, "_pois.gpkg")), quiet = TRUE)
+- 
+- # Group raw OSM tags into broader categories (order matters: first match wins)
+- p <- p |>
+-@@ -55,8 +66,10 @@ ggplot() +
+-     scale_colour_manual(values = pal) +
+-     guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1))) +
+-     theme_void() +
+--    labs(title = "Bengaluru POIs by category", colour = NULL)
+--ggsave("data/osm/bengaluru_pois_by_category.png", width = 9, height = 9, dpi = 200)
+-+    labs(title = paste(city_title, "POIs by category"), colour = NULL)
+-+ggsave(file.path(fig_dir, paste0(slug, "_pois_by_category.png")),
+-+    width = 9, height = 9, dpi = 200
+-+)
+- 
+- # 2. One panel per category (easier to read than one crowded map)
+- ggplot() +
+-@@ -68,4 +81,6 @@ ggplot() +
+-     scale_colour_manual(values = pal) +
+-     facet_wrap(~category, ncol = 3) +
+-     theme_void()
+--ggsave("C:\\Spatial-Analysis-of-Cities\\data\\gg_wrap.png", width = 12, height = 12, dpi = 200)
+-\ No newline at end of file
+-+ggsave(file.path(fig_dir, paste0(slug, "_pois_facets.png")),
+-+    width = 12, height = 12, dpi = 200
+-+)
+-diff --git a/data_extraction/dat_extractor.py b/data_extraction/dat_extractor.py
+-deleted file mode 100644
+-index 8d06288..0000000
+---- a/data_extraction/dat_extractor.py
+-+++ /dev/null
+-@@ -1,6 +0,0 @@
+--import requests as rs
+--import geopandas as gp
+--import pandas as pd
+--
+--#extracting datat fron open city maps for banglore
+--
+-diff --git a/data_extraction/data_extraction_osm.R b/data_extraction/data_extraction_osm.R
+-index ae99d1a..81944ec 100644
+---- a/data_extraction/data_extraction_osm.R
+-+++ b/data_extraction/data_extraction_osm.R
+-@@ -1,44 +1,90 @@
+-+# Extract boundary, POIs, buildings and roads from OSM for one or more cities.
+-+#
+-+# Usage (run from the project root):
+-+#   Rscript data_extraction/data_extraction_osm.R "Bengaluru, India" "Pune, India"
+-+#   Rscript data_extraction/data_extraction_osm.R --force "Delhi, India"
+-+#
+-+# With no city arguments it defaults to Bengaluru.
+-+# Flags:
+-+#   --force   re-extract cities whose output files already exist
+-+#   --strict  stop (instead of warn) if a boundary has to fall back to its bbox
+-+#
+-+# Consistent footprints: to use the same boundary definition for every city
+-+# (e.g. a GHSL Urban Centre or a Functional Urban Area), put a polygon file at
+-+#   data/boundaries/<slug>.gpkg      (slug = lower-case city name, letters only)
+-+# and it is used instead of the Nominatim administrative boundary.
+- 
+- library(osmextract)
+- library(osmdata)
+- library(sf)
+- library(dplyr)
+- 
+--# Cities
+--cities <- c(
+--  "Bengaluru, India"
+-+# ---- Configuration ----------------------------------------------------------
+-+
+-+args <- commandArgs(trailingOnly = TRUE)
+-+force_rerun <- "--force" %in% args
+-+strict <- "--strict" %in% args
+-+cities <- args[!startsWith(args, "--")]
+-+if (length(cities) == 0) {
+-+  cities <- "Bengaluru, India"
+-   # "Delhi, India", "Mumbai, India", "Hyderabad, India",
+-   # "Kolkata, India", "Chennai, India", "Pune, India", "Ahmedabad, India"
+--)
+-+}
+- 
+--out_dir <- "C:\\Spatial-Analysis-of-Cities\\data"
+--dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+-+root <- if (requireNamespace("here", quietly = TRUE)) here::here() else getwd()
+-+out_dir <- file.path(root, "data")
+-+boundary_dir <- file.path(out_dir, "boundaries")
+-+# Downloaded Geofabrik extracts are kept here so each regional file is
+-+# fetched once and reused by every city inside it (the default is a tempdir).
+-+pbf_dir <- file.path(out_dir, "osm_pbf")
+-+for (d in c(out_dir, boundary_dir, pbf_dir)) {
+-+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+-+}
+- 
+--#major feature extraction
+-+# Major feature extraction
+- poi_tags <- c("amenity", "shop", "office", "public_transport",
+-               "railway", "tourism", "leisure", "healthcare")
+- 
+--extract_city <- function(city) {
+--  slug <- gsub("[^a-z]", "", tolower(strsplit(city, ",")[[1]][1]))
+--  message("\n=== ", city, " ===")
+-+# ---- Helpers ----------------------------------------------------------------
+- 
+--# boundry shape file extraction
+--  boundary <- getbb(city, format_out = "sf_polygon", limit = 1)
+--  boundary <- st_transform(boundary, 4326)
+-+city_slug <- function(city) {
+-+  gsub("[^a-z]", "", tolower(strsplit(city, ",")[[1]][1]))
+-+}
+- 
+--  old_s2 <- sf_use_s2(FALSE)
+--  geom <- boundary |>
+--      st_geometry() |>
+--      st_make_valid() |>
+--      st_union() |>
+--      st_simplify(preserveTopology = TRUE, dTolerance = 0.0005) # ~50 m
+-+# Clean any polygon layer into a single valid MULTIPOLYGON in EPSG:4326.
+-+clean_polygon <- function(x) {
+-+  x |>
+-+    st_geometry() |>
+-+    st_transform(4326) |>
+-+    st_make_valid() |>
+-+    st_collection_extract("POLYGON") |>
+-+    st_union()
+-+}
+-+
+-+# Returns list(boundary = sf, source = "file"/"nominatim", fallback = logical).
+-+# Assumes sf_use_s2(FALSE) has been set by the caller.
+-+get_boundary <- function(city, slug) {
+-+  user_file <- file.path(boundary_dir, paste0(slug, ".gpkg"))
+-+
+-+  if (file.exists(user_file)) {
+-+    message("Using user-supplied boundary: ", user_file)
+-+    geom <- clean_polygon(st_read(user_file, quiet = TRUE))
+-+    return(list(
+-+      boundary = st_sf(geometry = st_cast(geom, "MULTIPOLYGON")),
+-+      source = "file", fallback = FALSE
+-+    ))
+-+  }
+-+
+-+  boundary <- getbb(city, format_out = "sf_polygon", limit = 1)
+-+  geom <- clean_polygon(boundary) |>
+-+    st_simplify(preserveTopology = TRUE, dTolerance = 0.0005) # ~50 m
+- 
+-   # Snap to a 4-decimal grid (~11 m) by rounding coordinates via WKT
+-   geom <- st_as_sfc(st_as_text(geom, digits = 4), crs = 4326) |>
+--      st_make_valid() |>
+--      st_buffer(0) |>
+--      st_collection_extract("POLYGON") |>
+--      st_union()
+-+    st_make_valid() |>
+-+    st_buffer(0) |>
+-+    st_collection_extract("POLYGON") |>
+-+    st_union()
+- 
+-   # Test: does it stay valid after being rounded to 5 decimals (what GDAL sees)?
+-   rounded <- st_as_sfc(st_as_text(geom, digits = 5), crs = 4326)
+-@@ -46,37 +92,119 @@ extract_city <- function(city) {
+-   message("Boundary valid after rounding: ", ok)
+- 
+-   if (!ok) {
+--      message("Falling back to bounding box for the clip")
+--      geom <- st_as_sfc(st_bbox(geom))
+--      st_crs(geom) <- 4326
+-+    msg <- paste0(
+-+      "Boundary for '", city, "' is invalid after rounding; ",
+-+      "falling back to its bounding box. The study area is no longer ",
+-+      "comparable with other cities."
+-+    )
+-+    if (strict) stop(msg, call. = FALSE)
+-+    warning(msg, call. = FALSE)
+-+    geom <- st_as_sfc(st_bbox(geom))
+-+    st_crs(geom) <- 4326
+-   }
+- 
+--  boundary <- st_sf(geometry = st_cast(geom, "MULTIPOLYGON"))
+--  place <- st_point_on_surface(st_geometry(boundary))
+--  sf_use_s2(old_s2)
+-+  list(
+-+    boundary = st_sf(geometry = st_cast(geom, "MULTIPOLYGON")),
+-+    source = "nominatim", fallback = !ok
+-+  )
+-+}
+- 
+--  st_write(boundary, file.path(out_dir, paste0(slug, "_boundary.gpkg")),
+--      delete_dsn = TRUE, quiet = TRUE
+-+# Build one row of the summary table (used for ok / skipped / error cities).
+-+summary_row <- function(city, status, pois = NA_integer_, pois_from_areas = NA_integer_,
+-+                        buildings = NA_integer_, roads = NA_integer_,
+-+                        boundary_source = NA_character_, boundary_fallback = NA,
+-+                        boundary_area_km2 = NA_real_, message = "") {
+-+  tibble(
+-+    city = city, status = status, pois = pois, pois_from_areas = pois_from_areas,
+-+    buildings = buildings, roads = roads, boundary_source = boundary_source,
+-+    boundary_fallback = boundary_fallback, boundary_area_km2 = boundary_area_km2,
+-+    message = message
+-   )
+-+}
+-+
+-+# Standardise POIs (from nodes or from area centroids) to one schema.
+-+as_poi_sf <- function(x, geom, source) {
+-+  df <- st_drop_geometry(x)
+-+  df$osm_id <- as.character(df$osm_id)
+-+  df <- df[, c("osm_id", "name", poi_tags)]
+-+  df$poi_source <- source
+-+  st_sf(df, geometry = geom)
+-+}
+-+
+-+# ---- Per-city extraction ----------------------------------------------------
+-+
+-+extract_city <- function(city) {
+-+  slug <- city_slug(city)
+-+  message("\n=== ", city, " ===")
+-+
+-+  files <- file.path(out_dir, paste0(slug, c("_boundary", "_pois", "_buildings", "_roads"), ".gpkg"))
+-+  if (!force_rerun && all(file.exists(files))) {
+-+    message("Outputs already exist, skipping (use --force to redo).")
+-+    return(summary_row(city, "skipped"))
+-+  }
+-+
+-+  old_s2 <- sf_use_s2(FALSE)
+-+  on.exit(sf_use_s2(old_s2), add = TRUE)
+-+
+-+  # 1. Boundary
+-+  b <- get_boundary(city, slug)
+-+  boundary <- b$boundary
+-+  place <- st_point_on_surface(st_geometry(boundary))
+-+  # Equal-area projection so areas are comparable across cities
+-+  area_km2 <- as.numeric(sum(st_area(st_transform(boundary, 6933)))) / 1e6
+-+
+-+  st_write(boundary, files[1], delete_dsn = TRUE, quiet = TRUE)
+- 
+-   clip <- list(boundary = boundary, boundary_type = "clipsrc")
+-+  # oe_get picks the smallest Geofabrik extract containing `place` and reuses
+-+  # the downloaded .pbf from pbf_dir on later calls.
+-+  dl <- list(download_directory = pbf_dir, max_file_size = 5e9)
+- 
+--  # 2. POIs (points): shops, amenities, offices, transit
+--  pois <- do.call(oe_get, c(list(
+-+  # 2a. POIs mapped as nodes: shops, amenities, offices, transit, leisure, health.
+-+  # NOTE: the WHERE clause must cover every tag the category scheme in
+-+  # amenitiy_wrap.r uses, otherwise those categories are undercounted.
+-+  node_pois <- do.call(oe_get, c(list(
+-     place = place, layer = "points", extra_tags = poi_tags,
+-     query = "SELECT osm_id, name, amenity, shop, office, public_transport,
+-                     railway, tourism, leisure, healthcare, geometry
+-              FROM points
+-              WHERE amenity IS NOT NULL OR shop IS NOT NULL OR office IS NOT NULL
+--                OR public_transport IS NOT NULL OR railway IS NOT NULL",
+--    quiet = FALSE), clip))
+-+                OR public_transport IS NOT NULL OR railway IS NOT NULL
+-+                OR tourism IS NOT NULL OR leisure IS NOT NULL
+-+                OR healthcare IS NOT NULL",
+-+    quiet = FALSE), dl, clip))
+-+
+-+  # 2b + 3. Polygons - can be large, takes a while.
+-+  # One query serves both buildings and "area POIs". Many malls, hospitals,
+-+  # schools and parks are mapped as areas, not nodes, so a nodes-only POI layer
+-+  # misses them. One pass over the layer also avoids reusing the cached
+-+  # multipolygons file with two different tag sets.
+-+  areas <- do.call(oe_get, c(list(
+-+    place = place, layer = "multipolygons", extra_tags = c("building", poi_tags),
+-+    query = "SELECT osm_id, osm_way_id, name, building, amenity, shop, office,
+-+                    public_transport, railway, tourism, leisure, healthcare, geometry
+-+             FROM multipolygons
+-+             WHERE building IS NOT NULL
+-+                OR amenity IS NOT NULL OR shop IS NOT NULL OR office IS NOT NULL
+-+                OR public_transport IS NOT NULL OR railway IS NOT NULL
+-+                OR tourism IS NOT NULL OR leisure IS NOT NULL
+-+                OR healthcare IS NOT NULL",
+-+    quiet = FALSE), dl, clip))
+-+
+-+  buildings <- areas[!is.na(areas$building),
+-+                     c("osm_id", "osm_way_id", "name", "building")]
+- 
+--  # 3. Buildings (polygons) - can be large, takes a while
+--  buildings <- do.call(oe_get, c(list(
+--    place = place, layer = "multipolygons", extra_tags = "building",
+--    query = "SELECT osm_id, osm_way_id, name, building, geometry
+--             FROM multipolygons WHERE building IS NOT NULL",
+--    quiet = FALSE), clip))
+-+  # Area POIs -> one point each (point on surface stays inside odd shapes).
+-+  is_poi <- Reduce(`|`, lapply(poi_tags, function(t) !is.na(areas[[t]])))
+-+  area_src <- areas[is_poi, ]
+-+  # Ways have osm_way_id, relations have osm_id: keep whichever exists.
+-+  area_src$osm_id <- dplyr::coalesce(as.character(area_src$osm_id),
+-+                                     as.character(area_src$osm_way_id))
+-+  area_pois <- as_poi_sf(area_src, st_point_on_surface(st_geometry(area_src)), "area")
+-+
+-+  # A node placed inside a building that is also tagged as the same amenity is
+-+  # counted twice; filter on `poi_source` later if that matters for your analysis.
+-+  pois <- rbind(as_poi_sf(node_pois, st_geometry(node_pois), "node"), area_pois)
+- 
+-   # 4. Road network (lines)
+-   roads <- do.call(oe_get, c(list(
+-@@ -87,22 +215,52 @@ extract_city <- function(city) {
+-                                'tertiary','residential','unclassified',
+-                                'motorway_link','trunk_link','primary_link',
+-                                'secondary_link','tertiary_link')",
+--    quiet = FALSE), clip))
+-+    quiet = FALSE), dl, clip))
+- 
+-   # 5. Save
+--  st_write(pois,      file.path(out_dir, paste0(slug, "_pois.gpkg")),      delete_dsn = TRUE, quiet = TRUE)
+--  st_write(buildings, file.path(out_dir, paste0(slug, "_buildings.gpkg")), delete_dsn = TRUE, quiet = TRUE)
+--  st_write(roads,     file.path(out_dir, paste0(slug, "_roads.gpkg")),     delete_dsn = TRUE, quiet = TRUE)
+-+  st_write(pois,      files[2], delete_dsn = TRUE, quiet = TRUE)
+-+  st_write(buildings, files[3], delete_dsn = TRUE, quiet = TRUE)
+-+  st_write(roads,     files[4], delete_dsn = TRUE, quiet = TRUE)
+- 
+--  tibble(city = city, pois = nrow(pois), buildings = nrow(buildings), roads = nrow(roads))
+-+  summary_row(
+-+    city, "ok",
+-+    pois = nrow(pois), pois_from_areas = nrow(area_pois),
+-+    buildings = nrow(buildings), roads = nrow(roads),
+-+    boundary_source = b$source, boundary_fallback = b$fallback,
+-+    boundary_area_km2 = round(area_km2, 1)
+-+  )
+-+}
+-+
+-+# One failing city must not lose the rest of a long multi-city run.
+-+safe_extract <- function(city) {
+-+  tryCatch(
+-+    extract_city(city),
+-+    error = function(e) {
+-+      message("FAILED: ", city, ": ", conditionMessage(e))
+-+      summary_row(city, "error", message = conditionMessage(e))
+-+    }
+-+  )
+- }
+- 
+--summary_tbl <- bind_rows(lapply(cities, extract_city))
+-+# ---- Run --------------------------------------------------------------------
+-+
+-+summary_tbl <- bind_rows(lapply(cities, safe_extract))
+- print(summary_tbl)
+- write.csv(summary_tbl, file.path(out_dir, "extraction_summary.csv"), row.names = FALSE)
+- 
+--# ---- Quick sanity check: plot POIs over the boundary ----
+--b <- st_read(file.path(out_dir, "bengaluru_boundary.gpkg"), quiet = TRUE)
+--p <- st_read(file.path(out_dir, "bengaluru_pois.gpkg"), quiet = TRUE)
+--plot(st_geometry(b), main = "Bengaluru POIs")
+--plot(st_geometry(p), add = TRUE, pch = ".", col = "red")
+-\ No newline at end of file
+-+if (any(summary_tbl$boundary_fallback %in% TRUE)) {
+-+  warning("Some cities used a bbox fallback boundary; see extraction_summary.csv",
+-+          call. = FALSE)
+-+}
+-+
+-+# ---- Quick sanity check: plot POIs over the boundary (interactive only) ----
+-+if (interactive()) {
+-+  first_ok <- summary_tbl$city[summary_tbl$status == "ok"][1]
+-+  if (!is.na(first_ok)) {
+-+    slug <- city_slug(first_ok)
+-+    b <- st_read(file.path(out_dir, paste0(slug, "_boundary.gpkg")), quiet = TRUE)
+-+    p <- st_read(file.path(out_dir, paste0(slug, "_pois.gpkg")), quiet = TRUE)
+-+    plot(st_geometry(b), main = paste(first_ok, "POIs"))
+-+    plot(st_geometry(p), add = TRUE, pch = ".", col = "red")
+-+  }
+-+}
+diff --git a/run_analysis.py b/run_analysis.py
+index e8afebd..8044e75 100644
+--- a/run_analysis.py
++++ b/run_analysis.py
+@@ -97,7 +97,7 @@ def main(argv=None):
+         if not a.skip_train:
+             if not step(f"Step 3: samples ({mode})", lambda: samples.build(
+                     a.data_dir, mode, a.cities, a.city_px, a.city_window_km, a.tile_px, a.tile_stride,
+-                    a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m)):
++                    a.min_inside, a.min_activity, a.normalise, a.channels, a.smooth_m, a.activity)):
+                 continue
+             if not step(f"Step 3: train ({mode})", lambda: train.train(
+                     a.data_dir, mode, a.epochs, a.latent, a.batch, a.lr, patience=a.patience,
