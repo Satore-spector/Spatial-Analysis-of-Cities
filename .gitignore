@@ -1,2 +1,17 @@
 boundry_file/
 data/
+
+# Python virtual environments (created by setup_env.py) - never commit these
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/

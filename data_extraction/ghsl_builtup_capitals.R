@@ -35,8 +35,9 @@
 #
 # Output, in data/ghsl/:
 #   <slug>_ghs_built_s_2018_10m.tif   built-up surface (m2 per 10 m cell, 0-100),
-#                                     cut to the city boundary, in the native
-#                                     equal-area Mollweide projection
+#                                     cut to the city boundary, in the city's
+#                                     UTM zone (native Mollweide cannot be
+#                                     exported by Earth Engine)
 #   ghsl_capitals_summary.csv         one row per city, including sanity checks
 #
 # Data: GHSL, European Commission JRC, licensed CC BY 4.0 (credit the source).
@@ -122,6 +123,16 @@ init_ee <- function(project) {
     ee$Initialize(project = project)
   }
   ee
+}
+
+# Earth Engine's getDownloadURL cannot write GeoTIFFs in a projection that only
+# exists as WKT text, which is how GHSL's native World_Mollweide is reported
+# (HTTP 400 "Unable to write GeoTIFFs in projection"). In that case tiles are
+# downloaded in the UTM zone of the city instead: a standard EPSG code that
+# Earth Engine accepts, metric, and equal-area to within ~0.1% across a city.
+utm_epsg <- function(lon, lat) {
+  zone <- floor((lon + 180) / 6) + 1
+  paste0("EPSG:", (if (lat >= 0) 32600 else 32700) + zone)
 }
 
 # Pixel-exact request for a lon/lat tile: snap it to the layer's own 10 m grid and
@@ -297,13 +308,25 @@ process_city <- function(ee, img, crs, city, state, opts) {
   grid <- grid[lengths(sf::st_intersects(tile_polys, boundary)) > 0, ]
   message(nrow(grid), " tile(s) to fetch at ", opts$tile_deg, " degrees")
 
+  # Download CRS: the native one if Earth Engine can write it (an EPSG code),
+  # otherwise the city's UTM zone on a 10 m grid anchored at the origin, so all
+  # tiles of the city still sit on one pixel grid.
+  dl_crs <- crs
+  dl_transform <- opts$native_transform
+  if (!grepl("^EPSG:[0-9]+$", crs)) {
+    cen <- sf::st_coordinates(sf::st_centroid(sf::st_union(boundary)))
+    dl_crs <- utm_epsg(cen[1, 1], cen[1, 2])
+    dl_transform <- c(cell_size_m, 0, 0, 0, -cell_size_m, 0)
+    message("Native CRS cannot be exported by Earth Engine; downloading in ", dl_crs)
+  }
+
   tile_dir <- file.path(opts$ghsl_dir, "tiles", slug)
   dir.create(tile_dir, recursive = TRUE, showWarnings = FALSE)
   tile_files <- file.path(tile_dir, sprintf("tile_%d_%d.tif", grid$ix, grid$iy))
   for (i in seq_len(nrow(grid))) {
     if (file.exists(tile_files[i])) next
     message("  downloading tile ", i, "/", nrow(grid))
-    download_tile(ee, img, crs, opts$native_transform,
+    download_tile(ee, img, dl_crs, dl_transform,
                   grid$xmin[i], grid$ymin[i], grid$xmax[i], grid$ymax[i],
                   tile_files[i])
   }
@@ -312,7 +335,7 @@ process_city <- function(ee, img, crs, city, state, opts) {
   terra::writeRaster(res$raster, out_tif, overwrite = TRUE,
                      gdal = c("COMPRESS=DEFLATE"))
 
-  # The Mollweide grid is equal-area, so the number of boundary cells times the
+  # The grid is (near) equal-area, so the number of boundary cells times the
   # cell area should match the boundary area. A big gap means a mask/CRS problem.
   gap <- abs(res$raster_area_km2 - area_km2) / area_km2
   if (gap > 0.1) {
@@ -414,4 +437,8 @@ main <- function() {
 }
 
 # Run only when executed as a script, not when sourced (e.g. for testing).
-if (sys.nframe() == 0L) main()
+if (sys.nframe() == 0L) {
+  res <- main()
+  # Non-zero exit status so run_pipeline.R reports the step as FAILED.
+  if (any(res$status %in% c("error", "no_boundary"))) quit(status = 1L)
+}
