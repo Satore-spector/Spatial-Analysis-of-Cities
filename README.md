@@ -45,10 +45,13 @@ The two languages only meet at the files. R writes `.gpkg` and `.tif`, and Pytho
 ## Repo layout
 
 ```
+setup_env.py                One-command setup: venv, Python packages, R packages
 data_extraction/
   data_extraction_osm.R     Step 1: boundary, POIs, buildings, roads from OSM
-  amenitiy_wrap.r           Groups raw OSM tags into POI categories and plots them
-  ghsl_builtup_capitals.R   Step 1: GHSL built-up surface from Google Earth Engine
+  amenity_wrap.R            Groups raw OSM tags into POI categories and plots them
+  ghsl_builtup_capitals.R   Step 1: GHSL built-up surface (10 m) from Google Earth Engine
+  build_city_list.py        Step 1: list of US urban centres + boundaries from GHS-UCDB
+  ghsl_builtup_100m.py      Step 1: GHSL built-up surface (100 m) for the US city list
 run_pipeline.R              Runs the R steps in order (with --check / --test modes)
 analysis/                   Steps 2-5 in Python
   rasterize.py              Step 2: .gpkg files -> grids (numpy or Spark SQL)
@@ -64,6 +67,10 @@ tests/                      Offline tests (fake data, no downloads)
 data/                       Inputs and outputs (not committed, see below)
 ```
 
+## Setup
+
+`python setup_env.py` creates a virtual environment and installs the Python and R packages (`--skip-r` or `--skip-python` for one half, `--dry-run` to preview). Run `python setup_env.py --help` for the other options.
+
 ## How to run the extraction
 
 Install the R packages once: `osmextract`, `osmdata`, `sf`, `dplyr`, `ggplot2`, and optionally `here`.
@@ -73,7 +80,7 @@ From the project root:
 ```
 Rscript data_extraction/data_extraction_osm.R "Bengaluru, India"
 Rscript data_extraction/data_extraction_osm.R "Pune, India" "Delhi, India"
-Rscript data_extraction/amenitiy_wrap.r bengaluru
+Rscript data_extraction/amenity_wrap.R bengaluru
 ```
 
 Useful flags for the extraction script:
@@ -88,6 +95,17 @@ What you get in `data/` for each city (`<slug>` is the lower-case city name):
 - `osm_pbf/`, cached OpenStreetMap downloads so we do not download the same region twice (regional extracts come from Geofabrik, e.g. https://download.geofabrik.de/asia/india.html)
 
 Output files are large and are not committed to git. Everyone generates them locally.
+
+### US cities (GHSL urban centres)
+
+For a consistent boundary definition across many cities, the US list comes from the GHSL Urban Centre Database instead of a place-name search. From the project root:
+
+```
+python data_extraction/build_city_list.py                    # writes data/uc/us_cities.csv and one boundary per city
+python data_extraction/ghsl_builtup_100m.py --project=MY_GCP_PROJECT
+```
+
+`build_city_list.py` takes `--min-pop`, `--country` and `--ucdb`; `ghsl_builtup_100m.py` takes `--limit` and `--only <slug ...>`. Both scripts document their output at the top of the file. `ghsl_builtup_capitals.R` is the older 10 m version used for the Indian cities.
 
 ## How to run steps 2-5 (Python)
 
