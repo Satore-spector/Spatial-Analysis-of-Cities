@@ -6,7 +6,7 @@ data/india/*
 data/india/analysis/*
 !data/india/analysis/classification/
 data/india/analysis/classification/*.gpkg
-
+site/public/city_grids
 # Python virtual environments (created by setup_env.py)
 .venv/
 venv/
