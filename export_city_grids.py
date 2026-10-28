@@ -15,9 +15,10 @@ Options:
     --max-dim 56                longest side of a plot in cells (bigger = sharper, larger files)
     --measure auto              activity used to find centres: auto, pois or built_up
     --max-pois 1200             POI dots kept per city (random sample, all categories)
-    --max-road-pts 3000         vertices kept for roads per city (major roads first)
+    --max-road-pts 6000         vertices kept for roads per city (major roads first)
     --max-built-pts 1500        vertices kept for built-up outlines per city
     --no-osm                    skip the Map view data (grids only)
+    --skip-existing             keep city files that are already in --out (resume an interrupted run)
     slug [slug ...]             only these cities
 
 Each file: grid size, cell size in km, the city mask, up to four layers
@@ -112,13 +113,14 @@ def osm_layers(slug, data_dir, meta, grid, mask, r0, r1, c0, c1, f, inside, n_po
     def to_plot(x, y):
         return (x - x0) / (cell * f) - c0 / f, (y1 - y) / (cell * f) - r0 / f
 
+    near = np.pad(ndimage.binary_dilation(inside, iterations=1), 1)   # city plus one cell of slack
+
     def in_city(px, py):
         """True where a plot-space point falls on a city cell (one cell of slack at the edge)."""
-        pad = np.pad(ndimage.binary_dilation(inside, iterations=1), 1)
         cc, rr = np.floor(px).astype(int) + 1, np.floor(py).astype(int) + 1
         ok = (cc >= 0) & (cc < w + 2) & (rr >= 0) & (rr < h + 2)
         res = np.zeros(len(px), bool)
-        res[ok] = pad[rr[ok], cc[ok]]
+        res[ok] = near[rr[ok], cc[ok]]
         return res
 
     # POIs: one dot each, by category (same rules as the pipeline)
@@ -149,23 +151,28 @@ def osm_layers(slug, data_dir, meta, grid, mask, r0, r1, c0, c1, f, inside, n_po
         roads = roads.explode(index_parts=False)
         roads = roads[roads.geom_type == "LineString"]
         major = roads["highway"].isin(MAJOR_ROADS).to_numpy() if "highway" in roads else np.zeros(len(roads), bool)
-        geoms = shapely.simplify(roads.geometry.to_numpy(), cell * f * 0.1)
-        groups = {"major": [], "minor": []}
-        for g, is_major in zip(geoms, major):
-            if g is None or g.is_empty or len(g.coords) < 2:
+        geoms = roads.geometry.to_numpy()
+        mid = shapely.get_coordinates(shapely.line_interpolate_point(geoms, 0.5, normalized=True))
+        keep = in_city(*to_plot(mid[:, 0], mid[:, 1]))          # drop roads outside the city
+        kept = {"major": [], "minor": []}
+        budget = n_road
+        for kind, sel in (("major", keep & major), ("minor", keep & ~major)):
+            if not sel.any():
                 continue
-            xy = np.column_stack(to_plot(*np.asarray(g.coords).T))
-            if not in_city(xy[:, 0], xy[:, 1]).any() or np.abs(np.diff(xy, axis=0)).sum() < 0.15:
-                continue
-            groups["major" if is_major else "minor"].append(xy)
-        budget, kept = n_road, {"major": [], "minor": []}
-        for kind in ("major", "minor"):
-            for xy in sorted(groups[kind], key=lambda a: -np.hypot(*np.diff(a, axis=0).T).sum()):
-                if budget < len(xy):
+            # OSM cuts streets into many short pieces: join them into whole streets first
+            streets = shapely.get_parts(shapely.line_merge(shapely.union_all(geoms[sel])))
+            streets = shapely.simplify(streets, cell * f * 0.1)
+            length = shapely.length(streets)
+            for i in np.argsort(-length):                       # longest streets first
+                g = streets[i]
+                if g.is_empty or len(g.coords) < 2 or length[i] < cell * f * 0.1:
+                    continue
+                xy = np.column_stack(to_plot(*np.asarray(g.coords).T))
+                if len(xy) > budget:
                     continue
                 kept[kind].append(path_b64(xy))
                 budget -= len(xy)
-        out["roads"] = {k: v for k, v in kept.items()}
+        out["roads"] = kept
 
     # Built-up area: smoothed built-up share (GHSL, else building footprints) cut into outlines
     ch = meta["channels"]
@@ -271,9 +278,10 @@ def main():
     p.add_argument("--max-dim", type=int, default=56)
     p.add_argument("--measure", default="auto")
     p.add_argument("--max-pois", type=int, default=1200)
-    p.add_argument("--max-road-pts", type=int, default=3000)
+    p.add_argument("--max-road-pts", type=int, default=6000)
     p.add_argument("--max-built-pts", type=int, default=1500)
     p.add_argument("--no-osm", action="store_true")
+    p.add_argument("--skip-existing", action="store_true")
     a = p.parse_args()
 
     rdir = raster_dir(a.data_dir)
@@ -284,19 +292,29 @@ def main():
         sys.exit(f"No .npz city grids in {rdir}. Run step 2 first: python -m analysis.rasterize")
 
     osm = None if a.no_osm else {"pois": a.max_pois, "road": a.max_road_pts, "built": a.max_built_pts}
+    import time
     done, total = 0, 0
     for i, s in enumerate(slugs, 1):
+        if a.skip_existing and os.path.exists(os.path.join(a.out, f"{s}.json")):
+            done += 1
+            continue
+        t0 = time.time()
         try:
             size, why = export_city(s, a.data_dir, a.out, a.max_dim, a.measure, osm)
+        except MemoryError:
+            size, why = None, "ran out of memory (try --no-osm for this city)"
         except Exception as e:
-            size, why = None, str(e)
+            size, why = None, f"{type(e).__name__}: {e}"
+        took = time.time() - t0
         if size:
             done += 1
             total += size
+            if took > 20 or len(slugs) <= 20:
+                print(f"  {s}: {size / 1024:.0f} KB in {took:.0f} s")
         else:
             print(f"  {s}: skipped ({why})")
-        if i % 100 == 0:
-            print(f"  {i}/{len(slugs)}")
+        if i % 25 == 0:
+            print(f"  {i}/{len(slugs)}", flush=True)
     print(f"Wrote {done} city plots to {a.out} ({total / 1e6:.1f} MB)")
 
 

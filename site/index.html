@@ -256,7 +256,9 @@ animate2d(cv,x,S,p=>{x.clearRect(0,0,S,S);x.save();x.beginPath();x.arc(px,py,S*p
 x.beginPath();rs.forEach(r=>{r.forEach((q,i)=>i?x.lineTo(X(q[0]),Y(q[1])):x.moveTo(X(q[0]),Y(q[1])));x.closePath()});
 x.fillStyle="#1a6f72";x.fill();x.strokeStyle="rgba(255,255,255,.8)";x.lineWidth=3;x.stroke();x.restore();
 if(p>.65)plus(x,px,py,Math.min(1,(p-.65)/.35));scaleBar(x,S,s/111,true)})}
-async function plot(c,i){const d=await getG(c.slug);if(selI!=i)return;if(d)return gridPlot(c,d);const g=await getB();if(selI!=i)return;outlinePlot(c,g)}
+async function plot(c,i){const d=await getG(c.slug);if(selI!=i)return;
+if(d){try{return gridPlot(c,d)}catch(e){console.error("city plot failed for "+c.slug,e);const cv=document.getElementById("cp"),x=cv.getContext("2d");x.clearRect(0,0,cv.width,cv.height);x.fillStyle="#a8e4de";x.font="600 26px Inter,sans-serif";x.textAlign="center";x.fillText("Could not draw this city's plot",cv.width/2,cv.height/2-14);x.font="20px Inter,sans-serif";x.fillText(String(e.message||e).slice(0,70),cv.width/2,cv.height/2+22);x.textAlign="left";document.getElementById("lyr").innerHTML="";document.getElementById("cats").innerHTML="";document.getElementById("lg").textContent="Re-run export_city_grids.py for this city, or open the browser console for details.";return}}
+const g=await getB();if(selI!=i)return;outlinePlot(c,g)}
 function mark(i){const el=document.querySelector(`.city[data-i="${i}"]`),old=document.getElementById("hl");if(old)old.remove();if(!el)return null;
 const c=CITIES[i],cx=el.getAttribute("cx"),cy=el.getAttribute("cy"),r=+el.getAttribute("r");
 document.getElementById("india").insertAdjacentHTML("beforeend",`<g id="hl" pointer-events="none"><circle class="hr" cx="${cx}" cy="${cy}" r="${r+3}" stroke="${COL[c.type]}"/><circle cx="${cx}" cy="${cy}" r="${r+2}" fill="${COL[c.type]}" stroke="#fff" stroke-width="2"/></g>`);return el}
