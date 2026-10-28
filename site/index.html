@@ -17,8 +17,14 @@ h1{font-size:clamp(2.4rem,7vw,4.6rem);font-weight:800;letter-spacing:-.03em;line
 h2{font-size:clamp(1.7rem,4vw,2.5rem);font-weight:800;letter-spacing:-.02em;margin:0 0 8px}
 .k{color:var(--t500);font-weight:600;font-size:.8rem;letter-spacing:.14em;text-transform:uppercase}
 p{color:var(--mute);max-width:70ch}p b{color:var(--ink)}
-#hero{min-height:92vh;display:flex;flex-direction:column;justify-content:center;max-width:none;background:linear-gradient(135deg,var(--t900),var(--t700) 60%,var(--t500));color:#effaf9}
-#hero>*{max-width:980px;width:100%;margin-left:auto;margin-right:auto}#hero p{color:var(--t100);font-size:1.15rem}#hero .k{color:var(--t200)}
+#hero{min-height:92vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);align-items:center;gap:clamp(24px,5vw,72px);max-width:none;margin:0;padding:96px max(24px,6vw);background:linear-gradient(135deg,var(--t900),var(--t700) 60%,var(--t500));color:#effaf9}
+.hero-anim{width:100%;max-width:420px;justify-self:center}
+#stack{aspect-ratio:400/520;max-height:72vh;margin:0 auto;border-radius:0;background:none}
+#hero h1{font-size:clamp(2.2rem,5vw,4rem);margin:0}
+.team{list-style:none;margin:36px 0 0;padding:0 0 0 18px;border-left:3px solid var(--t300);display:grid;gap:18px}
+.team b{display:block;font-size:1.3rem;font-weight:800;letter-spacing:-.01em}
+.team span{display:block;font-size:.95rem;letter-spacing:.08em;color:var(--t200)}
+@media(max-width:760px){#hero{grid-template-columns:1fr;padding:56px 24px}.hero-anim{max-width:260px}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin:24px 0}
 canvas{width:100%;display:block;border-radius:12px;background:var(--t900)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:24px 0}
@@ -62,9 +68,51 @@ ul.bl{margin:8px 0 14px;padding:0;list-style:none;max-width:72ch;font-size:.92re
 @media(max-width:420px){.sc3{height:290px;transform:scale(.78)}}
 </style></head><body>
 
-<!-- HERO: replace this block with your existing opening page -->
-<section id="hero"><div class="k">Big data · Urban form · India</div><h1>Spatial Analysis of Cities</h1>
-<p>Unsupervised learning on open map data (OpenStreetMap + GHSL) to sort cities by spatial structure, without rules decided in advance.</p><p style="font-size:.95rem"><b>Team</b> · Your name · Teammates · Course / date</p></section>
+<!-- HERO -->
+<section id="hero"><div class="hero-anim" aria-hidden="true"><canvas id="stack"></canvas></div>
+<div class="hero-text"><h1>Spatial Analysis of Cities</h1>
+<ul class="team"><li><b>Teerth</b><span>PRN 25060242153</span></li><li><b>Sherin</b><span>PRN 25060242127</span></li></ul></div>
+<script>
+/* Looping tower-stacking animation: a block swings, drops, lands; the camera scrolls down as the tower grows, then it resets. */
+(()=>{const c=document.getElementById("stack"),g=c.getContext("2d");
+const W=400,H=520,BH=30,BW=116,G=H-22,MAXN=16,PY=-40,L=150,
+PAL=["#38b2ac","#1f9a96","#6fcfc7","#a8e4de","#177d7c","#e07a2f"],
+SK=[[10,70,46],[62,110,38],[104,60,52],[260,90,44],[308,130,40],[352,64,40]],
+reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+let tower,cam,fade,blk,mode,t,last=0,raf=0;
+const rnd=a=>a[Math.random()*a.length|0],
+mk=x=>({x,c:rnd(PAL),m:[0,1,2,3].map(()=>Math.random()<.6),t:9});
+function spawn(){blk=mk(W/2);blk.y=PY+L;blk.vy=0;blk.tgt=W/2+Math.random()*36-18;mode="swing";t=0}
+function reset(){tower=[];cam=0;fade=1;spawn()}
+function size(){const d=Math.min(devicePixelRatio||1,2);c.width=Math.round(c.clientWidth*d);c.height=Math.round(c.clientHeight*d)}
+function block(b,top,sq){const h=BH*sq,y=top+BH-h,x=b.x-BW/2;
+ g.fillStyle=b.c;g.fillRect(x,y,BW,h);g.strokeStyle="rgba(11,47,49,.55)";g.lineWidth=2;g.strokeRect(x,y,BW,h);
+ for(let i=0;i<4;i++){g.fillStyle=b.m[i]?"#fff3b0":"rgba(11,47,49,.45)";g.fillRect(x+12+i*26,y+(h-12)/2,14,12)}}
+function step(dt){t+=dt;
+ if(mode==="swing"){const th=.62*Math.sin(1.9*t);blk.x=W/2+L*Math.sin(th);blk.y=PY+L*Math.cos(th);
+  if((t>.5&&Math.abs(blk.x-blk.tgt)<3.5)||t>6){mode="fall";blk.vy=0}}
+ else if(mode==="fall"){blk.vy+=1500*dt;blk.y+=blk.vy*dt;
+  if(blk.y+BH/2>=G-tower.length*BH+cam){blk.t=0;tower.push(blk);if(tower.length>=MAXN){mode="done";t=0}else spawn()}}
+ else{fade=t<1.6?1:Math.max(0,1-(t-1.6));if(t>2.7)reset()}
+ tower.forEach(b=>b.t+=dt);
+ cam+=(Math.max(0,tower.length*BH-(G-230))-cam)*Math.min(1,dt*4)}
+function draw(){const s=c.width/W;g.setTransform(s,0,0,s,0,0);g.clearRect(0,0,W,H);
+ g.fillStyle="rgba(255,255,255,.07)";SK.forEach(([x,h,w])=>g.fillRect(x,G-h+cam*.3,w,h+40));
+ g.fillStyle="rgba(11,47,49,.35)";g.fillRect(0,G,W,H-G);g.fillStyle="rgba(255,255,255,.4)";g.fillRect(0,G,W,2);
+ g.globalAlpha=fade;
+ tower.forEach((b,i)=>block(b,G-(i+1)*BH+cam,b.t<.25?1-.12*Math.sin(Math.PI*b.t/.25):1));
+ if(mode==="done"){const b=tower[tower.length-1],top=G-tower.length*BH+cam;
+  g.fillStyle="#e07a2f";g.beginPath();g.moveTo(b.x-BW/2-4,top);g.lineTo(b.x,top-26);g.lineTo(b.x+BW/2+4,top);g.fill()}
+ g.globalAlpha=1;
+ if(mode==="swing"||mode==="fall"){
+  if(mode==="swing"){g.strokeStyle="rgba(255,255,255,.7)";g.lineWidth=2;g.beginPath();g.moveTo(W/2,0);g.lineTo(blk.x,blk.y-BH/2);g.stroke()}
+  block(blk,blk.y-BH/2,1)}}
+function frame(ts){const dt=Math.min((ts-last)/1000||0,.05);last=ts;step(dt);draw();raf=requestAnimationFrame(frame)}
+size();new ResizeObserver(()=>{size();draw()}).observe(c);
+if(reduce){reset();for(let i=0;i<10;i++)tower.push(mk(W/2+Math.random()*20-10));mode="done";t=0;fade=1;cam=Math.max(0,tower.length*BH-(G-230));draw()}
+else{reset();new IntersectionObserver(e=>{if(e[0].isIntersecting){last=performance.now();raf=requestAnimationFrame(frame)}else cancelAnimationFrame(raf)}).observe(c)}
+})();
+</script></section>
 
 <section id="desc"><div class="k rv">01 · Project description</div><h2 class="rv">Why this is a big data project</h2>
 <ul class="bl rv"><li>Each Indian urban centre becomes image-like grids: POIs, buildings, roads, satellite built-up</li><li>A neural network learns which cities look alike, with no labels</li><li><b>Volume:</b> millions of map features, ~1M rows per city</li><li><b>Variety:</b> points, polygons, lines and rasters</li><li><b>Repetition:</b> the same pipeline for hundreds of cities</li></ul><div class="rc rv"><div class="rcw"><div class="sc3"></div><p class="cl">Compressed downloads, before several GB of temp files. Click the cube to scramble and solve it again.</p></div></div><h3 class="rv">How PySpark is used</h3><ul class="bl rv"><li><b>Spark SQL:</b> every city's features in one Parquet table, partitioned by city</li><li>Grid cell computed per row; sums by city, layer and cell in one parallel job</li><li><b>Spark MLlib:</b> k-means, with silhouette score choosing the number of groups</li></ul><div class="card rv"><canvas id="pipe" width="900" height="260"></canvas></div></section>
