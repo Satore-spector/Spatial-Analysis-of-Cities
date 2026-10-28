@@ -2,35 +2,152 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Spatial Analysis of Cities</title>
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<script type="module" src="/src/main.ts"></script>
 </head>
 <body>
-<header class="hero">
-  <h1>Spatial Analysis of Cities</h1>
-  <p>Which cities have one centre, and which have several? Explore the classification results.</p>
-  <label id="drop" class="drop">
-    <input id="file" type="file" accept=".csv" hidden>
-    <span id="dropmsg">Drop city_types.csv here or click to choose</span>
-  </label>
-  <button id="demo" class="ghost">Load demo data</button>
-</header>
-<main id="app" hidden>
-  <section class="band"><h2>Overview</h2><div id="stats" class="cards"></div></section>
-  <section class="band alt"><h2>Type distribution</h2><p class="note">Click a bar to filter everything below.</p><div id="bars"></div></section>
-  <section class="band"><h2>Evidence explorer</h2>
-    <p class="note">Pick any two numeric columns. Filtered-out cities fade; hover for names, click for details.</p>
-    <div class="row"><label>X <select id="ax"></select></label><label>Y <select id="ay"></select></label></div>
-    <div class="plotwrap"><canvas id="cv"></canvas><div id="tip" class="tip" hidden></div></div>
-    <div id="legend" class="legend"></div>
-  </section>
-  <section class="band alt"><h2>Cities</h2>
-    <div class="row"><input id="q" placeholder="Search city…"><select id="conf"></select><button id="clear" class="ghost">Clear filters</button><span id="count" class="note"></span></div>
-    <div class="tbl"><table id="tbl"></table></div>
-    <aside id="detail" class="detail" hidden></aside>
-  </section>
-</main>
+<div class="hero">
+ <div class="fade">
+  <div class="grid-bg" id="gb"></div>
+  <h1>Spatial Analysis of Cities: can a neural network tell monocentric from polycentric?</h1>
+  <div class="sub">Unsupervised learning on open map data (OpenStreetMap + GHSL) to sort cities by spatial structure, without rules decided in advance.</div>
+  <div class="team"><b>Team</b>Your name · Teammates · Course / date</div>
+ </div>
+</div>
+
+<section>
+ <div class="fade">
+  <h2>The Idea</h2>
+  <p class="lead">Cities are usually called <b>monocentric</b> (one dominant centre) or <b>polycentric</b> (several). We turn each city into image-like grids of shops, offices, buildings and roads, train a network <b>without labels</b>, cluster what it learns, and check whether the groups match those classic ideas.</p>
+  <div class="callout"><p>The first goal is not a final answer. It is to narrow down broad trends so we know where to look closer.</p></div>
+ </div>
+ <div class="fade">
+  <h3>Project status</h3>
+  <p class="note">Steps 3–5 are tested on fake cities with a known answer, and have run on one real city.</p>
+  <div class="cards">
+   <div class="card"><div class="val">1</div><div class="lab">Download city data</div><div class="sn">OSM works (Bengaluru); GHSL pull built, still being tested</div></div>
+   <div class="card"><div class="val">2</div><div class="lab">City boundaries</div><div class="sn">Partly done</div></div>
+   <div class="card"><div class="val">3–5</div><div class="lab">Grids, network, clustering, checks</div><div class="sn">Built; run on Bengaluru in tile mode</div></div>
+   <div class="card warn"><div class="val">India</div><div class="lab">Country-wide run</div><div class="sn">Built and tested offline, not yet run on real data</div></div>
+  </div>
+ </div>
+</section>
+
+<section>
+ <div class="fade">
+  <h2>How the Pipeline Works</h2>
+  <p class="lead">Five steps. R and Python only meet at the files: R writes <code>.gpkg</code> and <code>.tif</code>, Python reads them.</p>
+ </div>
+ <div class="fade">
+  <div class="car" id="car"><div class="trk" id="trk">
+   <div class="sl"><div class="card"><h4>1 · Extract (R)</h4><p class="sn" style="font-size:.95rem">Per city: boundary, points of interest, buildings and roads saved as <code>.gpkg</code>, plus the optional GHSL built-up raster.</p></div></div>
+   <div class="sl"><div class="card"><h4>2 · Rasterize (Python)</h4><p class="sn" style="font-size:.95rem">100 m grid cells in the local projection. Layers: 10 POI categories, building share, major and minor road length, GHSL built-up share. The POI density peak marks the city centre.</p></div></div>
+   <div class="sl"><div class="card"><h4>3 · Learn</h4><p class="sn" style="font-size:.95rem">A convolutional autoencoder squeezes each example into an embedding. Rotations and flips count as the same layout. <b>City mode</b>: one ~40 km window per city. <b>Tile mode</b>: many 3.2 km patches per city.</p></div></div>
+   <div class="sl"><div class="card"><h4>4 · Cluster</h4><p class="sn" style="font-size:.95rem">k-means or HDBSCAN on the embeddings, drawn with UMAP. Tile mode defaults to 8 patch types, since fewer collapses into just “inner” and “outer”.</p></div></div>
+   <div class="sl"><div class="card"><h4>5 · Check</h4><p class="sn" style="font-size:.95rem">Classical rule-based tests on the same grids: density-gradient fit, Giuliano–Small style centres, McMillen style subcentres. Do the network’s groups match them?</p></div></div>
+  </div></div>
+  <div class="ctl"><button id="pv">←</button><div class="dots" id="dt"></div><div class="cnt" id="ct"></div><button id="nx">→</button></div>
+ </div>
+</section>
+
+<section>
+ <div class="fade">
+  <h2>First Results: Bengaluru</h2>
+  <p class="lead">One city, tile mode. OSM extraction in October 2026.</p>
+ </div>
+ <div class="fade">
+  <h3>What was extracted</h3>
+  <p class="note">Boundary from a place-name search.</p>
+  <div class="cards">
+   <div class="card"><div class="val">54,186</div><div class="lab">POIs</div><div class="sn">40,855 points · 13,331 shapes</div></div>
+   <div class="card"><div class="val">736,627</div><div class="lab">Buildings</div></div>
+   <div class="card"><div class="val">108,713</div><div class="lab">Road lines</div></div>
+   <div class="card"><div class="val">8</div><div class="lab">Patch types</div><div class="sn">Found by the network</div></div>
+  </div>
+ </div>
+ <div class="fade">
+  <h3>The classical tests disagree</h3>
+  <p class="note">So for now Bengaluru is “unclear”.</p>
+  <div class="vs">
+   <div class="card"><div class="val">1</div><div class="lab">Giuliano–Small style</div><div class="sn">One subcentre, south of the main centre</div></div>
+   <div class="card warn"><div class="val">0</div><div class="lab">McMillen style</div><div class="sn">Activity is spread out in many medium-busy patches; nothing stands out sharply enough</div></div>
+  </div>
+  <div class="callout"><p>These tests count POIs, which likely under-count job hubs such as tech parks. Next check: rerun with <code>--measure poi_offices</code>.</p></div>
+ </div>
+ <div class="fade">
+  <h3>The network’s patch types form rings</h3>
+  <p class="note">Rings are expected in any city, polycentric ones included, so they do not prove monocentricity.</p>
+  <div class="ring"><span>Commercial core</span><span>Dense residential ring</span><span>Mixed suburbs</span><span>Outer residential</span><span>City edge</span></div>
+  <div class="callout"><h4><span class="tag" style="background:#fff;color:#0B3B45">Exception</span>An office-and-leisure patch type in the east</h4><p>Away from the core. It may be a second, office-type centre that the POI-based tests miss. To be checked on a map in QGIS.</p></div>
+ </div>
+</section>
+
+<section>
+ <div class="fade">
+  <h2>Scaling Up: Every City in a Country</h2>
+  <p class="lead"><code>run_country.py</code> classifies every GHSL urban centre above 100,000 people, with one boundary rule for all cities. Each stage is resumable.</p>
+ </div>
+ <div class="fade">
+  <div class="tbl"><table>
+   <tr><th>Stage</th><th>What it does</th></tr>
+   <tr><td>list</td><td>GHSL urban centres over the population cut-off, one boundary each</td></tr>
+   <tr><td>osm</td><td>Six Geofabrik India zone files, each read once and split across cities</td></tr>
+   <tr><td>ghsl</td><td>Built-up surface at 100 m from Earth Engine</td></tr>
+   <tr><td>analysis</td><td>Grids, classical tests, autoencoder and groups (Spark optional)</td></tr>
+   <tr><td>classify</td><td>One type per city, a map and a report</td></tr>
+  </table></div>
+ </div>
+ <div class="fade">
+  <h3>How a city’s type is decided</h3>
+  <div class="stack">
+   <div class="card"><div class="val">GHSL first</div><div class="lab">Satellite-based tests</div><div class="sn">Both classical tests agree: that is the type. Confidence “high” if OSM agrees and the city is well mapped, else “medium”.</div></div>
+   <div class="card"><div class="val">OSM next</div><div class="lab">When GHSL tests disagree</div><div class="sn">OSM tests decide with “low” confidence, unless the city is very sparsely mapped.</div></div>
+   <div class="card warn"><div class="val">Unclear</div><div class="lab">Sparse and disputed</div><div class="sn">Mapping quality is POIs per km² of built-up area, relative to the median city.</div></div>
+  </div>
+ </div>
+</section>
+
+<section>
+ <div class="fade">
+  <h2>A Controlled Three-City Test</h2>
+  <p class="lead">Three US cities, one GHSL boundary definition, similar OSM quality. The labels come from the literature and are expectations, not facts. The network never sees them.</p>
+ </div>
+ <div class="fade">
+  <div class="cards">
+   <div class="card"><h4>Boston</h4><div class="lab">Expected monocentric</div><div class="sn">One dominant downtown</div></div>
+   <div class="card"><h4>Los Angeles</h4><div class="lab">Expected polycentric</div><div class="sn">The standard example of many centres</div></div>
+   <div class="card"><h4>Atlanta</h4><div class="lab">Expected “other”</div><div class="sn">Low-density, dispersed, no strong core</div></div>
+  </div>
+  <div class="callout"><p>Three cities is the minimum for a comparison and is not enough to claim anything general.</p></div>
+ </div>
+</section>
+
+<section>
+ <div class="fade">
+  <h2>Caveats and Safeguards</h2>
+  <div class="cards">
+   <div class="card"><h4>Uneven OSM coverage</h4><ul><li>The network could learn “how well mapped” rather than shape</li><li>Each layer is divided by the city’s own average</li><li>GHSL used where every city has it</li></ul></div>
+   <div class="card"><h4>Comparable boundaries</h4><ul><li>Place-name search differs by country</li><li>Prefer GHSL urban centres</li><li>Boundary never shown to the network</li></ul></div>
+   <div class="card"><h4>POIs are not jobs</h4><ul><li>Literature uses employment</li><li>Cut-offs are relative: top 10% of cells, at least 3% of activity</li></ul></div>
+   <div class="card"><h4>Giant “cities”</h4><ul><li>GHSL can join touching areas into district-sized units</li><li>Flagged <code>large_area=True</code></li></ul></div>
+  </div>
+ </div>
+</section>
+
+<section>
+ <div class="fade">
+  <h2>Conclusion and Next Steps</h2>
+  <div class="callout"><h4>Where we are</h4><p>The full pipeline exists and is tested on fake cities with a known answer. On Bengaluru the classical tests disagree, and the network points to a possible second office-type centre in the east. Real comparison starts with three or more cities.</p></div>
+  <div class="stack" style="margin-top:24px">
+   <div class="card"><div class="val">1</div><div class="lab">First real run</div><div class="sn"><code>run_country.py --country India --limit 20</code>, then check the summaries and report</div></div>
+   <div class="card"><div class="val">2</div><div class="lab">All of India</div><div class="sn">Read the GHSL vs OSM agreement and the mapping-quality check</div></div>
+   <div class="card"><div class="val">3</div><div class="lab">Name the groups</div><div class="sn">Use <code>cluster_profiles.png</code> and <code>tile_maps.png</code>; inspect giant centres by hand</div></div>
+   <div class="card"><div class="val">4</div><div class="lab">Related work</div><div class="sn">Moosavi (2017) is the closest template; ours adds POIs, buildings and roads, and a consistent boundary</div></div>
+  </div>
+ </div>
+</section>
+
+<script type="module" src="/src/main.ts"></script>
 </body>
 </html>
