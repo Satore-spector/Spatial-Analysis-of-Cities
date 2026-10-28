@@ -78,7 +78,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 14px;text-align:lef
 <p class="rv">Every urban centre in the run is a point, sized by population. Click one (or search) to see its type, evidence and a schematic of its centre. <span style="color:#1f9a96">●</span> monocentric <span style="color:#e07a2f">●</span> polycentric <span style="color:#9aa9a9">●</span> unclear</p><p class="rv"><input id="q" list="dl" placeholder="Find a city…" style="padding:9px 14px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit"><datalist id="dl"></datalist> <small id="srcnote"></small></p>
 <div class="mapwrap rv"><div class="card"><svg id="india" viewBox="0 0 530 540"></svg></div>
 <div class="card" id="panel"><p>Select a city.</p></div></div>
-<div class="card rv"><table><thead><tr><th>Type</th><th>Cities</th><th>Share</th><th></th></tr></thead><tbody id="tb"></tbody></table></div><div class="card rv"><table id="tz"></table></div><div class="card rv"><table id="tc"></table></div><p class="rv" id="note"></p></section>
+<div class="card rv"><table><thead><tr><th>Type</th><th>Cities</th><th>Share</th><th></th></tr></thead><tbody id="tb"></tbody></table></div><div class="card rv"><table id="tz"></table></div><p class="rv" id="note"></p></section>
 
 <section id="end"><div class="k rv">05 · Conclusion</div>
 <div class="card" id="concl"><div id="body"><h2>Why this needed big data</h2>
@@ -145,7 +145,7 @@ let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;pts.forEach(p=>{x0=Math.min(x0,p[0]);x1=Math.m
 const k=Math.cos((y0+y1)/2*Math.PI/180),s=140/Math.max((x1-x0)*k,y1-y0),X=v=>(8+(v-x0)*k*s).toFixed(1),Y=v=>(152-(v-y0)*s).toFixed(1);
 document.getElementById("sc").innerHTML=`<path d="${rs.map(r=>"M"+r.map(p=>X(p[0])+","+Y(p[1])).join("L")+"Z").join("")}" fill="${COL[c.type]}" fill-opacity=".18" stroke="${COL[c.type]}"/><circle cx="${X(c.clon)}" cy="${Y(c.clat)}" r="5" fill="${COL[c.type]}"/>`}
 function show(i){selI=i;document.querySelectorAll(".city").forEach(e=>e.classList.toggle("sel",e.dataset.i==i));const c=CITIES[i];
-panel.innerHTML=`<h3 style="margin:0 0 6px">${c.name}</h3><span class="badge" style="background:${COL[c.type]};color:#fff">${cap(c.type)}</span>${c.conf?` <span class="badge">${c.conf} confidence</span>`:""}
+panel.innerHTML=`<h3 style="margin:0 0 6px">${c.name}</h3><span class="badge" style="background:${COL[c.type]};color:#fff">${cap(c.type)}</span>
 <svg id="sc" viewBox="0 0 160 160" width="100%" style="max-width:220px;display:block;margin:8px 0">${schem(c)}</svg>
 <p style="font-size:.85rem;margin:0 0 8px">Dot = busiest point (density peak). Shape is schematic unless a boundary file is present.</p>
 <p style="font-size:.9rem;margin:0"><b>${fmt(c.pop)}</b> people · <b>${fmt(c.area)}</b> km² · ${fmt(c.bu)} km² built up · ${c.size}<br>GHSL subcentres: ${c.gs} (Giuliano–Small), ${c.mc} (McMillen)<br>${c.why}${c.big?'<br><b style="color:#e07a2f">Very large urban centre: likely several towns joined, read its type as a regional statement.</b>':""}</p>`;real(c,i)}
@@ -160,9 +160,8 @@ show(ord[0]);
 const n=CITIES.length,by=(k)=>{const m={};CITIES.forEach(c=>{const v=k(c)||"–";m[v]=m[v]||{};m[v][c.type]=(m[v][c.type]||0)+1});return m},bt={};CITIES.forEach(c=>bt[c.type]=(bt[c.type]||0)+1);
 tb.innerHTML=TY.map(t=>`<tr><td><span style="color:${COL[t]}">●</span> ${cap(t)}</td><td>${bt[t]||0}</td><td>${((bt[t]||0)/n*100).toFixed(1)}%</td><td style="width:35%"><div class="bar" style="width:${(bt[t]||0)/n*100}%;background:${COL[t]};min-width:2px"></div></td></tr>`).join("")+`<tr class="tot"><td>Total</td><td>${n}</td><td>100%</td><td></td></tr>`;
 const xt=(el,h,m,order)=>{const ks=order?order.filter(k=>m[k]):Object.keys(m);el.innerHTML=`<thead><tr><th>${h}</th>${TY.map(t=>`<th>${cap(t)}</th>`).join("")}</tr></thead><tbody>${ks.map(k=>`<tr><td>${k}</td>${TY.map(t=>`<td>${m[k][t]||0}</td>`).join("")}</tr>`).join("")}</tbody>`};
-xt(tz,"City size",by(c=>c.size),["0.1-0.5 million","0.5-1 million","1-5 million","5 million+"]);xt(tc,"Confidence",by(c=>c.conf),["high","medium","low","–"]);
-const P=CITIES.filter(c=>c.type=="polycentric"),L=P.filter(c=>c.conf=="low").length;
-note.innerHTML=`Read with care: ${L} of ${P.length} polycentric calls are low confidence, and ${CITIES.filter(c=>c.big).length} urban centre(s) are flagged as very large (several towns joined). Types come from classical centre tests on GHSL built-up area with OSM as support; the network's groups are a check, not the classifier.`});
+xt(tz,"City size",by(c=>c.size),["0.1-0.5 million","0.5-1 million","1-5 million","5 million+"]);
+note.innerHTML=`${CITIES.filter(c=>c.big).length} urban centre(s) are flagged as very large (several towns joined). Types come from classical centre tests on GHSL built-up area with OSM as support; the network's groups are a check, not the classifier.`});
 // CONCLUSION WIPE
 concl.addEventListener('click',()=>concl.classList.add('done'));
 </script></body></html>

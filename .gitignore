@@ -29,3 +29,5 @@ Rplots*.pdf
 
 # One-off patch files (apply them, then delete; the change lives in git history)
 *.patch
+
+codebase_dump.txt
