@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Spatial Analysis of Cities</title>
-<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
 <div class="hero">
@@ -24,12 +24,12 @@
  </div>
  <div class="fade">
   <h3>Project status</h3>
-  <p class="note">Steps 3–5 are tested on fake cities with a known answer, and have run on one real city.</p>
+  <p class="note">Steps 3–5 are tested on fake cities with a known answer, and have run on the India city list.</p>
   <div class="cards">
-   <div class="card"><div class="val">1</div><div class="lab">Download city data</div><div class="sn">OSM works (Bengaluru); GHSL pull built, still being tested</div></div>
+   <div class="card"><div class="val">1</div><div class="lab">Download city data</div><div class="sn">GHSL pulled for all 979 India cities; OSM missing for some (see Results)</div></div>
    <div class="card"><div class="val">2</div><div class="lab">City boundaries</div><div class="sn">Partly done</div></div>
-   <div class="card"><div class="val">3–5</div><div class="lab">Grids, network, clustering, checks</div><div class="sn">Built; run on Bengaluru in tile mode</div></div>
-   <div class="card warn"><div class="val">India</div><div class="lab">Country-wide run</div><div class="sn">Built and tested offline, not yet run on real data</div></div>
+   <div class="card"><div class="val">3–5</div><div class="lab">Grids, network, clustering, checks</div><div class="sn">Built; run on the India list in city mode and tile mode</div></div>
+   <div class="card"><div class="val">979</div><div class="lab">India cities classified</div><div class="sn">Results below. The network’s groups barely match the classical types</div></div>
   </div>
  </div>
 </section>
@@ -68,7 +68,7 @@
  </div>
  <div class="fade">
   <h3>The classical tests disagree</h3>
-  <p class="note">So for now Bengaluru is “unclear”.</p>
+  <p class="note">In this single-city run the tests disagreed. In the India-wide run Bengaluru is classed monocentric, with medium confidence: the GHSL tests agree and the OSM tests are unclear.</p>
   <div class="vs">
    <div class="card"><div class="val">1</div><div class="lab">Giuliano–Small style</div><div class="sn">One subcentre, south of the main centre</div></div>
    <div class="card warn"><div class="val">0</div><div class="lab">McMillen style</div><div class="sn">Activity is spread out in many medium-busy patches; nothing stands out sharply enough</div></div>
@@ -108,6 +108,39 @@
  </div>
 </section>
 
+<section id="results">
+ <div class="fade">
+  <h2>Results: Every City in India</h2>
+  <p class="lead">Each city’s type comes from the classical centre tests on GHSL built-up area, with OpenStreetMap POIs as support. The network does not decide the type. Its groups are used afterwards as a check.</p>
+ </div>
+ <div class="fade">
+  <h3>How many of each</h3>
+  <p class="note" id="res-status">Loading city_types.csv…</p>
+  <div class="cards" id="res-stats"></div>
+  <div class="bars" id="res-bars"></div>
+ </div>
+ <div class="fade">
+  <h3>Polycentric calls are weak</h3>
+  <p class="note">Confidence by type. Unclear cities have no confidence value.</p>
+  <div class="tbl" id="res-conf"></div>
+  <div class="callout"><p id="res-poly"></p></div>
+ </div>
+ <div class="fade">
+  <h3>By city size</h3>
+  <p class="note">Number of cities per size class and type.</p>
+  <div class="tbl" id="res-size"></div>
+ </div>
+ <div class="fade">
+  <h3>Do the network’s groups match the types?</h3>
+  <p class="note">Barely. The adjusted Rand index is 0 for chance and 1 for identical (figures from the classification report).</p>
+  <div class="vs">
+   <div class="card warn"><div class="val">-0.01</div><div class="lab">Tile mode</div><div class="sn">No better than chance. These groups also follow how well a city is mapped on OSM (Kruskal-Wallis p = 6.67e-27), so they partly sort cities by mapping effort, not by shape.</div></div>
+   <div class="card"><div class="val">0.11</div><div class="lab">City mode</div><div class="sn">Slightly above chance, still low. The report’s mapping-quality check does not flag these groups.</div></div>
+  </div>
+  <div class="callout"><p>Where the GHSL and OSM tests both give a clear type (507 cities) they agree for 93%. Almost all of that agreement is on monocentric: 473 cities are monocentric in both, and only 1 is polycentric in both.</p></div>
+ </div>
+</section>
+
 <section>
  <div class="fade">
   <h2>A Controlled Three-City Test</h2>
@@ -138,12 +171,10 @@
 <section>
  <div class="fade">
   <h2>Conclusion and Next Steps</h2>
-  <div class="callout"><h4>Where we are</h4><p>The full pipeline exists and is tested on fake cities with a known answer. On Bengaluru the classical tests disagree, and the network points to a possible second office-type centre in the east. Real comparison starts with three or more cities.</p></div>
+  <div class="callout"><h4>Where we are</h4><p>The full pipeline exists, is tested on fake cities with a known answer, and has run on 979 Indian cities. Most are classed monocentric, and the polycentric calls are almost all low confidence. The network’s groups barely match the classical types, so the classical tests carry the result.</p></div>
   <div class="stack" style="margin-top:24px">
-   <div class="card"><div class="val">1</div><div class="lab">First real run</div><div class="sn"><code>run_country.py --country India --limit 20</code>, then check the summaries and report</div></div>
-   <div class="card"><div class="val">2</div><div class="lab">All of India</div><div class="sn">Read the GHSL vs OSM agreement and the mapping-quality check</div></div>
-   <div class="card"><div class="val">3</div><div class="lab">Name the groups</div><div class="sn">Use <code>cluster_profiles.png</code> and <code>tile_maps.png</code>; inspect giant centres by hand</div></div>
-   <div class="card"><div class="val">4</div><div class="lab">Related work</div><div class="sn">Moosavi (2017) is the closest template; ours adds POIs, buildings and roads, and a consistent boundary</div></div>
+   <div class="card"><div class="val">1</div><div class="lab">Name the groups</div><div class="sn">Use <code>cluster_profiles.png</code> and <code>tile_maps.png</code>; inspect giant centres by hand</div></div>
+   <div class="card"><div class="val">2</div><div class="lab">Related work</div><div class="sn">Moosavi (2017) is the closest template; ours adds POIs, buildings and roads, and a consistent boundary</div></div>
   </div>
  </div>
 </section>
