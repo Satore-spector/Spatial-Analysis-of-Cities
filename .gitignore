@@ -1,5 +1,11 @@
-# Data inputs and outputs: large, generated locally, never committed
-data/
+# data/: ignore everything except the small result files
+data/*
+!data/india/
+data/india/*
+!data/india/analysis/
+data/india/analysis/*
+!data/india/analysis/classification/
+data/india/analysis/classification/*.gpkg
 
 # Python virtual environments (created by setup_env.py)
 .venv/
