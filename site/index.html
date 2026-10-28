@@ -36,11 +36,22 @@ svg text.sk.go{animation:sk 2.4s ease forwards}
 @keyframes sk{60%{stroke-dashoffset:0;fill-opacity:0}100%{stroke-dashoffset:0;fill-opacity:1}}
 .defs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
 .defs .card{margin:0;border-top:4px solid var(--t400)}.defs h4{margin:0 0 6px;color:var(--t600)}.defs p{margin:0;font-size:.93rem}
-.mapwrap{display:grid;grid-template-columns:3fr 2fr;gap:20px}@media(max-width:760px){.mapwrap{grid-template-columns:1fr}}
+.mapwrap{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:20px}@media(max-width:760px){.mapwrap{grid-template-columns:1fr}}
 #india path{fill:var(--t100);stroke:var(--t400);stroke-width:1.5}
 @media(prefers-color-scheme:dark){:root:not([data-theme=light]) #india path{fill:var(--t800)}}
 .city{cursor:pointer;stroke:#fff;stroke-width:.5;fill-opacity:.85}.city:hover,.city.sel{stroke:#0b2f31;stroke-width:2}.city.monocentric{fill:#1f9a96}.city.polycentric{fill:#e07a2f}.city.unclear{fill:#9aa9a9}tr.tot td{font-weight:800}
 .city.pending{fill:var(--t300)}.city.unclear{fill:#e0a030}
+#panel{box-shadow:0 18px 48px rgba(11,47,49,.28);border-color:var(--t400)}
+#lead{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:3}
+#lead path{fill:none;stroke-width:3;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:0;opacity:.85;animation:ld .7s ease-out both}
+@keyframes ld{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+.hr{fill:none;stroke-width:2.5;transform-box:fill-box;transform-origin:center;animation:pu 1.6s ease-out infinite}
+@keyframes pu{from{transform:scale(1);opacity:.9}to{transform:scale(3.4);opacity:0}}
+.ghost{position:fixed;z-index:60;pointer-events:none;box-shadow:0 10px 40px rgba(0,0,0,.45)}
+.lyr{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 0;min-height:4px}
+.lyr button{font:inherit;font-size:.78rem;padding:4px 12px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.lyr button.on{background:var(--t500);border-color:var(--t500);color:#fff}
+@media(prefers-reduced-motion:reduce){.hr,#lead path{animation:none}}
 .badge{display:inline-block;padding:3px 12px;border-radius:99px;background:var(--t100);color:var(--t800);font-weight:600;font-size:.85rem}
 table{width:100%;border-collapse:collapse}th,td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--line)}th{color:var(--t600);font-size:.8rem;letter-spacing:.1em;text-transform:uppercase}
 .bar{height:8px;border-radius:4px;background:var(--t400)}
@@ -130,7 +141,7 @@ else{reset();new IntersectionObserver(e=>{if(e[0].isIntersecting){last=performan
 <section id="out"><div class="k rv">04 · Outputs</div><h2 class="rv">The cities on the map</h2>
 <p class="rv">Click a point or search a city. Point size = population. <span style="color:#1f9a96">●</span> monocentric <span style="color:#e07a2f">●</span> polycentric <span style="color:#9aa9a9">●</span> unclear</p><p class="rv"><input id="q" list="dl" placeholder="Find a city…" style="padding:9px 14px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit"><datalist id="dl"></datalist> <small id="srcnote"></small></p>
 <div class="mapwrap rv"><div class="card"><svg id="india" viewBox="0 0 530 540"></svg></div>
-<div class="card" id="panel"><p>Select a city.</p></div></div>
+<div class="card" id="panel"><p>Select a city.</p></div><svg id="lead"></svg></div>
 <div class="card rv"><table><thead><tr><th>Type</th><th>Cities</th><th>Share</th><th></th></tr></thead><tbody id="tb"></tbody></table></div><div class="card rv"><table id="tz"></table></div><p class="rv" id="note"></p></section>
 
 <section id="end"><div class="k rv">05 · Conclusion</div>
@@ -184,25 +195,78 @@ let CITIES=[],selI=-1,BP=null;
 function parseCSV(t){const o=[];let f="",r=[],q=0;t=t.replace(/^\uFEFF/,"");for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=0}else f+=c}else if(c=='"')q=1;else if(c==","){r.push(f);f=""}else if(c=="\n"||c=="\r"){if(c=="\r"&&t[i+1]=="\n")i++;r.push(f);f="";o.push(r);r=[]}else f+=c}if(f!==""||r.length){r.push(f);o.push(r)}const b=o.filter(x=>x.some(v=>v.trim())),cols=b.shift().map(s=>s.trim());return b.map(x=>Object.fromEntries(cols.map((c,i)=>[c,x[i]??""])))}
 async function load(){try{const r=await fetch("city_types.csv");if(!r.ok)throw 0;const rows=parseCSV(await r.text());if(!rows.length||!("final_type" in rows[0]))throw 0;return{rows,src:"Live from city_types.csv"}}catch(e){return{rows:SNAP.rows.map(a=>Object.fromEntries(SNAP.cols.map((c,i)=>[c,a[i]]))),src:"Embedded snapshot of city_types.csv (the page loads the live file when it sits next to it)"}}}
 const getB=()=>BP||(BP=fetch("city_boundaries.geojson").then(r=>r.ok?r.json():null).catch(()=>null));
-function schem(c){const R=62,rk=Math.sqrt(c.area/Math.PI),cl=v=>Math.max(-.9,Math.min(.9,v)),dx=cl((c.clon-c.lon)*111*Math.cos(c.lat*Math.PI/180)/rk)*R,dy=cl(-(c.clat-c.lat)*111/rk)*R;
-return`<circle cx="80" cy="80" r="${R}" fill="${COL[c.type]}" fill-opacity=".12" stroke="#38b2ac" stroke-dasharray="4 4"/><circle cx="${80+(dx||0)}" cy="${80+(dy||0)}" r="5" fill="${COL[c.type]}"/>`}
-async function real(c,i){const g=await getB();if(!g||selI!=i)return;const f=g.features.find(f=>{const p=f.properties||{};return(p.city||p.slug)===c.slug});if(!f)return;
-const G=f.geometry,rs=G.type=="Polygon"?[G.coordinates[0]]:G.coordinates.map(p=>p[0]),pts=rs.flat(),xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
-let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;pts.forEach(p=>{x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1])});
-const k=Math.cos((y0+y1)/2*Math.PI/180),s=140/Math.max((x1-x0)*k,y1-y0),X=v=>(8+(v-x0)*k*s).toFixed(1),Y=v=>(152-(v-y0)*s).toFixed(1);
-document.getElementById("sc").innerHTML=`<path d="${rs.map(r=>"M"+r.map(p=>X(p[0])+","+Y(p[1])).join("L")+"Z").join("")}" fill="${COL[c.type]}" fill-opacity=".18" stroke="${COL[c.type]}"/><circle cx="${X(c.clon)}" cy="${Y(c.clat)}" r="5" fill="${COL[c.type]}"/>`}
-function show(i){selI=i;document.querySelectorAll(".city").forEach(e=>e.classList.toggle("sel",e.dataset.i==i));const c=CITIES[i];
+// CITY MAP PLOT: pops out of the India map. Uses city_grids/<slug>.json (export_city_grids.py) when present, else the outline from city_boundaries.geojson.
+const GR={},LN={built_up:"Built-up",buildings:"Buildings",pois:"POIs",roads:"Roads"},TOK={n:0},
+RAMP=(()=>{const st=[[0,[18,73,76]],[.3,[31,154,150]],[.6,[168,228,222]],[.85,[255,243,176]],[1,[255,209,102]]];
+return[...Array(256)].map((_,v)=>{const t=v/255;let j=1;while(j<st.length-1&&t>st[j][0])j++;const[a,A]=st[j-1],[b,B]=st[j],u=(t-a)/(b-a);return`rgb(${A.map((z,k)=>Math.round(z+(B[k]-z)*u)).join(",")})`})})(),
+unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0)),
+getG=s=>GR[s]||(GR[s]=fetch(`city_grids/${s}.json`).then(r=>r.ok?r.json():null).catch(()=>null)),
+still=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function animate2d(cv,x,S,draw){const tok=++TOK.n;if(still())return draw(1);const t0=performance.now();(function f(t){if(tok!=TOK.n)return;const p=Math.min(1,(t-t0)/900);draw(1-Math.pow(1-p,3));if(p<1)requestAnimationFrame(f)})(t0)}
+function scaleBar(x,S,pxkm,north){const nice=[1,2,5,10,20,50,100,200].filter(k=>k*pxkm<=210).pop()||1,L=nice*pxkm,bx=60,by=S-52;
+x.strokeStyle="#fff";x.fillStyle="#fff";x.lineWidth=4;x.beginPath();x.moveTo(bx,by-10);x.lineTo(bx,by);x.lineTo(bx+L,by);x.lineTo(bx+L,by-10);x.stroke();
+x.font="600 24px Inter,sans-serif";x.textAlign="left";x.fillText(nice+" km",bx,by-18);
+if(north){x.textAlign="center";x.fillText("N",S-60,70);x.beginPath();x.moveTo(S-60,82);x.lineTo(S-72,112);x.lineTo(S-48,112);x.fill()}x.textAlign="left"}
+function plus(x,px,py,u){x.strokeStyle="#0b2f31";x.lineWidth=11*u;x.beginPath();x.moveTo(px-16*u,py);x.lineTo(px+16*u,py);x.moveTo(px,py-16*u);x.lineTo(px,py+16*u);x.stroke();
+x.strokeStyle="#fff";x.lineWidth=5*u;x.stroke()}
+function gridPlot(c,d){const cv=document.getElementById("cp"),x=cv.getContext("2d"),S=cv.width,w=d.w,h=d.h,mb=unb64(d.mask),ins=k=>(mb[k>>3]>>(7-(k&7)))&1,
+L={};for(const k in d.layers)L[k]=unb64(d.layers[k]);const names=Object.keys(L);let cur=names[0];
+const cs=Math.floor((S-150)/Math.max(w,h)),ox=(S-cs*w)/2,oy=(S-cs*h)/2-8,cx=d.cbd?d.cbd[0]:w/2,cy=d.cbd?d.cbd[1]:h/2;let md=1;
+for(let r=0;r<h;r++)for(let q=0;q<w;q++)if(ins(r*w+q))md=Math.max(md,Math.hypot(q+.5-cx,r+.5-cy));
+const lyr=document.getElementById("lyr");lyr.innerHTML=names.length>1?names.map(n=>`<button data-l="${n}" class="${n==cur?"on":""}">${LN[n]}</button>`).join(""):"";
+const note=()=>{lg.innerHTML=`<span style="color:#ff9f43">◯</span> Giuliano–Small centres · <span style="color:#38a8dc">◌</span> McMillen · <b>+</b> main centre<br>Colour: ${LN[cur]||""} relative to this city's own peak · cells ≈ ${Math.round(d.cell_km*1000)} m`};note();
+function draw(p){x.clearRect(0,0,S,S);
+for(let r=0;r<h;r++)for(let q=0;q<w;q++){const k=r*w+q;if(!ins(k))continue;const a=Math.max(0,Math.min(1,(p*1.3-Math.hypot(q+.5-cx,r+.5-cy)/md)*5));if(a<=0)continue;
+x.globalAlpha=a;x.fillStyle=RAMP[L[cur][k]];x.fillRect(ox+q*cs,oy+r*cs,cs+.6,cs+.6)}
+x.globalAlpha=Math.min(1,p*1.5);x.strokeStyle="rgba(255,255,255,.75)";x.lineWidth=3;x.beginPath();
+for(let r=0;r<h;r++)for(let q=0;q<w;q++){if(!ins(r*w+q))continue;const X=ox+q*cs,Y=oy+r*cs;
+if(r==0||!ins((r-1)*w+q)){x.moveTo(X,Y);x.lineTo(X+cs,Y)}if(r==h-1||!ins((r+1)*w+q)){x.moveTo(X,Y+cs);x.lineTo(X+cs,Y+cs)}
+if(q==0||!ins(r*w+q-1)){x.moveTo(X,Y);x.lineTo(X,Y+cs)}if(q==w-1||!ins(r*w+q+1)){x.moveTo(X+cs,Y);x.lineTo(X+cs,Y+cs)}}x.stroke();x.globalAlpha=1;
+const u=Math.max(0,Math.min(1,(p-.65)/.35));
+if(u>0){const ring=(g,col,dash,gap)=>{x.strokeStyle=col;x.lineWidth=5*u;x.setLineDash(dash);x.beginPath();x.arc(ox+g.x*cs,oy+g.y*cs,(Math.max(g.r*cs,10)+gap)*u,0,7);x.stroke();x.setLineDash([])};
+(d.mc||[]).forEach(g=>ring(g,"#38a8dc",[10,8],11));(d.gs||[]).forEach(g=>ring(g,"#ff9f43",[],3));
+if(d.cbd)plus(x,ox+d.cbd[0]*cs,oy+d.cbd[1]*cs,u)}
+scaleBar(x,S,cs/d.cell_km,true);
+const gx=S-60-150,gy=S-52;for(let i=0;i<150;i++){x.fillStyle=RAMP[Math.round(i/149*255)];x.fillRect(gx+i,gy,1.2,14)}x.fillStyle="#fff";x.font="600 20px Inter,sans-serif";x.fillText("low",gx,gy-8);x.textAlign="right";x.fillText("high",gx+150,gy-8);x.textAlign="left"}
+lyr.onclick=e=>{const n=e.target.dataset.l;if(n&&L[n]){cur=n;[...lyr.children].forEach(b=>b.classList.toggle("on",b.dataset.l==n));note();++TOK.n;draw(1)}};
+animate2d(cv,x,S,draw)}
+function outlinePlot(c,g){const cv=document.getElementById("cp"),x=cv.getContext("2d"),S=cv.width;document.getElementById("lyr").innerHTML="";
+const f=g&&g.features.find(f=>{const p=f.properties||{};return(p.city||p.slug)===c.slug});
+if(!f){x.fillStyle="#a8e4de";x.font="600 26px Inter,sans-serif";x.textAlign="center";x.fillText("No boundary file for this city",S/2,S/2);x.textAlign="left";lg.textContent="";return}
+const G=f.geometry,rs=G.type=="Polygon"?[G.coordinates[0]]:G.coordinates.map(p=>p[0]),pts=rs.flat();let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+pts.forEach(p=>{x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1])});
+const k=Math.cos((y0+y1)/2*Math.PI/180),s=(S-170)/Math.max((x1-x0)*k,y1-y0),ox=(S-(x1-x0)*k*s)/2,oy=(S-(y1-y0)*s)/2-8,X=v=>ox+(v-x0)*k*s,Y=v=>oy+(y1-v)*s,px=X(c.clon),py=Y(c.clat);
+lg.innerHTML=`<b>+</b> density peak · outline of the urban centre<br><span style="opacity:.7">Outline only: run export_city_grids.py to add built-up, buildings, POIs and roads.</span>`;
+animate2d(cv,x,S,p=>{x.clearRect(0,0,S,S);x.save();x.beginPath();x.arc(px,py,S*p*1.1,0,7);x.clip();
+x.beginPath();rs.forEach(r=>{r.forEach((q,i)=>i?x.lineTo(X(q[0]),Y(q[1])):x.moveTo(X(q[0]),Y(q[1])));x.closePath()});
+x.fillStyle="#1a6f72";x.fill();x.strokeStyle="rgba(255,255,255,.8)";x.lineWidth=3;x.stroke();x.restore();
+if(p>.65)plus(x,px,py,Math.min(1,(p-.65)/.35));scaleBar(x,S,s/111,true)})}
+async function plot(c,i){const d=await getG(c.slug);if(selI!=i)return;if(d)return gridPlot(c,d);const g=await getB();if(selI!=i)return;outlinePlot(c,g)}
+function mark(i){const el=document.querySelector(`.city[data-i="${i}"]`),old=document.getElementById("hl");if(old)old.remove();if(!el)return null;
+const c=CITIES[i],cx=el.getAttribute("cx"),cy=el.getAttribute("cy"),r=+el.getAttribute("r");
+document.getElementById("india").insertAdjacentHTML("beforeend",`<g id="hl" pointer-events="none"><circle class="hr" cx="${cx}" cy="${cy}" r="${r+3}" stroke="${COL[c.type]}"/><circle cx="${cx}" cy="${cy}" r="${r+2}" fill="${COL[c.type]}" stroke="#fff" stroke-width="2"/></g>`);return el}
+function lead(i){const Ld=document.getElementById("lead"),el=document.querySelector(`.city[data-i="${i}"]`);if(!Ld||!el)return;
+const W=Ld.parentNode.getBoundingClientRect(),a=el.getBoundingClientRect(),b=panel.getBoundingClientRect(),x1=a.left+a.width/2-W.left,y1=a.top+a.height/2-W.top,col=COL[CITIES[i].type],cl=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+let x2,y2,d;if(b.left>=a.right+8){x2=b.left-W.left;y2=cl(y1,b.top-W.top+30,b.bottom-W.top-30);const m=(x1+x2)/2;d=`M${x1},${y1}C${m},${y1} ${m},${y2} ${x2},${y2}`}
+else{x2=cl(x1,b.left-W.left+30,b.right-W.left-30);y2=b.top-W.top;const m=(y1+y2)/2;d=`M${x1},${y1}C${x1},${m} ${x2},${m} ${x2},${y2}`}
+Ld.innerHTML=`<path d="${d}" pathLength="1" stroke="${col}"/><circle cx="${x2}" cy="${y2}" r="5" fill="${col}"/>`}
+function pop(el,col){if(!el||still()||!el.animate)return;const a=el.getBoundingClientRect(),b=panel.getBoundingClientRect(),g=document.createElement("div");g.className="ghost";document.body.appendChild(g);
+const px=v=>v+"px",A={left:px(a.left),top:px(a.top),width:px(a.width),height:px(a.height),borderRadius:"50%",background:col,opacity:1},B={left:px(b.left),top:px(b.top),width:px(b.width),height:px(b.height),borderRadius:"16px",background:"#0b2f31",opacity:.9};
+g.animate([A,{...B,opacity:1,offset:.85},{...B,opacity:0}],{duration:650,easing:"cubic-bezier(.2,.8,.2,1)"}).onfinish=()=>g.remove();
+panel.animate([{opacity:0,transform:"scale(.94)"},{opacity:1,transform:"none"}],{duration:420,delay:230,easing:"ease-out",fill:"backwards"})}
+function show(i,go){selI=i;document.querySelectorAll(".city").forEach(e=>e.classList.toggle("sel",e.dataset.i==i));const c=CITIES[i];
 panel.innerHTML=`<h3 style="margin:0 0 6px">${c.name}</h3><span class="badge" style="background:${COL[c.type]};color:#fff">${cap(c.type)}</span>
-<svg id="sc" viewBox="0 0 160 160" width="100%" style="max-width:220px;display:block;margin:8px 0">${schem(c)}</svg>
-<p style="font-size:.85rem;margin:0 0 8px">Dot = busiest point (density peak). Shape is schematic unless a boundary file is present.</p>
-<p style="font-size:.9rem;margin:0"><b>${fmt(c.pop)}</b> people · <b>${fmt(c.area)}</b> km² · ${fmt(c.bu)} km² built up · ${c.size}<br>GHSL subcentres: ${c.gs} (Giuliano–Small), ${c.mc} (McMillen)<br>Location: ${c.lat.toFixed(2)}°N, ${c.lon.toFixed(2)}°E<br>${c.why}${c.big?'<br><b style="color:#e07a2f">Very large urban centre: likely several towns joined, read its type as a regional statement.</b>':""}</p>`;real(c,i)}
+<div class="lyr" id="lyr"></div><canvas id="cp" width="800" height="800" style="margin:8px 0"></canvas><p class="cl" id="lg" style="margin:0 0 10px"></p>
+<p style="font-size:.9rem;margin:0"><b>${fmt(c.pop)}</b> people · <b>${fmt(c.area)}</b> km² · ${fmt(c.bu)} km² built up · ${c.size}<br>GHSL subcentres: ${c.gs} (Giuliano–Small), ${c.mc} (McMillen)<br>Location: ${c.lat.toFixed(2)}°N, ${c.lon.toFixed(2)}°E<br>${c.why}${c.big?'<br><b style="color:#e07a2f">Very large urban centre: likely several towns joined, read its type as a regional statement.</b>':""}</p>`;
+const el=mark(i);lead(i);if(go)pop(el,COL[c.type]);plot(c,i)}
+window.addEventListener("resize",()=>{if(selI>=0)lead(selI)});
 load().then(({rows,src})=>{
 CITIES=rows.map(r=>({slug:r.city,name:r.name||r.label,pop:+r.pop,area:+r.area_km2,big:String(r.large_area)==="True",lon:+r.lon,lat:+r.lat,clon:+r.centre_lon,clat:+r.centre_lat,type:r.final_type,conf:r.confidence,why:r.reason,size:r.size_class,gs:r.ghsl_gs_subcentres,mc:r.ghsl_mcmillen_subcentres,bu:+r.built_up_km2}));
 TOTAL_CITIES=CITIES.length.toLocaleString("en-IN");{const k={};CITIES.forEach(c=>k[c.name]=(k[c.name]||0)+1);CITIES.forEach(c=>c.key=k[c.name]>1?`${c.name} (${c.lat.toFixed(1)}°N, ${c.lon.toFixed(1)}°E)`:c.name)}srcnote.textContent=src;
 const svg=document.getElementById("india"),ord=CITIES.map((_,i)=>i).sort((a,b)=>CITIES[b].pop-CITIES[a].pop);
 svg.innerHTML='<path d="M'+OUT.map(p=>px(...p).join(",")).join("L")+'Z"/>'+ord.map(i=>{const c=CITIES[i],[X,Y]=px(c.lon,c.lat);return`<circle class="city ${c.type}" data-i="${i}" cx="${X.toFixed(1)}" cy="${Y.toFixed(1)}" r="${(2+Math.max(0,Math.log10(c.pop/1e5))*2.4).toFixed(1)}"><title>${c.key}</title></circle>`}).join("");
-svg.addEventListener("click",e=>{if(e.target.dataset.i!=null)show(+e.target.dataset.i)});
-dl.innerHTML=CITIES.map(c=>`<option value="${c.key}">`).join("");q.addEventListener("change",()=>{const i=CITIES.findIndex(c=>c.key.toLowerCase()==q.value.trim().toLowerCase());if(i>=0)show(i)});
+svg.addEventListener("click",e=>{if(e.target.dataset.i!=null)show(+e.target.dataset.i,true)});
+dl.innerHTML=CITIES.map(c=>`<option value="${c.key}">`).join("");q.addEventListener("change",()=>{const i=CITIES.findIndex(c=>c.key.toLowerCase()==q.value.trim().toLowerCase());if(i>=0)show(i,true)});
 show(ord[0]);
 const n=CITIES.length,by=(k)=>{const m={};CITIES.forEach(c=>{const v=k(c)||"–";m[v]=m[v]||{};m[v][c.type]=(m[v][c.type]||0)+1});return m},bt={};CITIES.forEach(c=>bt[c.type]=(bt[c.type]||0)+1);
 tb.innerHTML=TY.map(t=>`<tr><td><span style="color:${COL[t]}">●</span> ${cap(t)}</td><td>${bt[t]||0}</td><td>${((bt[t]||0)/n*100).toFixed(1)}%</td><td style="width:35%"><div class="bar" style="width:${(bt[t]||0)/n*100}%;background:${COL[t]};min-width:2px"></div></td></tr>`).join("")+`<tr class="tot"><td>Total</td><td>${n}</td><td>100%</td><td></td></tr>`;
