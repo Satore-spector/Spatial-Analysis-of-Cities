@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spatial Analysis of Cities</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script type="module" src="/src/main.ts"></script>
+</head>
+<body>
+<header class="hero">
+  <h1>Spatial Analysis of Cities</h1>
+  <p>Which cities have one centre, and which have several? Explore the classification results.</p>
+  <label id="drop" class="drop">
+    <input id="file" type="file" accept=".csv" hidden>
+    <span id="dropmsg">Drop city_types.csv here or click to choose</span>
+  </label>
+  <button id="demo" class="ghost">Load demo data</button>
+</header>
+<main id="app" hidden>
+  <section class="band"><h2>Overview</h2><div id="stats" class="cards"></div></section>
+  <section class="band alt"><h2>Type distribution</h2><p class="note">Click a bar to filter everything below.</p><div id="bars"></div></section>
+  <section class="band"><h2>Evidence explorer</h2>
+    <p class="note">Pick any two numeric columns. Filtered-out cities fade; hover for names, click for details.</p>
+    <div class="row"><label>X <select id="ax"></select></label><label>Y <select id="ay"></select></label></div>
+    <div class="plotwrap"><canvas id="cv"></canvas><div id="tip" class="tip" hidden></div></div>
+    <div id="legend" class="legend"></div>
+  </section>
+  <section class="band alt"><h2>Cities</h2>
+    <div class="row"><input id="q" placeholder="Search city…"><select id="conf"></select><button id="clear" class="ghost">Clear filters</button><span id="count" class="note"></span></div>
+    <div class="tbl"><table id="tbl"></table></div>
+    <aside id="detail" class="detail" hidden></aside>
+  </section>
+</main>
+</body>
+</html>
